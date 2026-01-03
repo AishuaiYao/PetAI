@@ -1,1 +1,1 @@
-pip install requests -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install dashscope pyaudio numpy -i https://pypi.tuna.tsinghua.edu.cn/simple
