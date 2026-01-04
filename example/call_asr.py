@@ -2,7 +2,7 @@
 import time
 import ujson as json
 import urequests as requests
-import ubinascii  # 确保导入的是 ubinascii
+import ubinascii
 from machine import I2S, Pin
 import network
 
@@ -27,8 +27,9 @@ WS_PIN = Pin(41)
 SD_PIN = Pin(40)
 
 # VAD (语音活动检测) 配置
-ENERGY_THRESHOLD_SPEECH = 1000
-ENERGY_THRESHOLD_SILENCE = 100
+# !!! 注意：您设置的阈值非常高，可能需要根据新的打印信息进行调整 !!!
+ENERGY_THRESHOLD_SPEECH = 1000000
+ENERGY_THRESHOLD_SILENCE = 500000
 MIN_SPEECH_DURATION = 0.3
 SILENCE_DURATION = 0.8
 FRAME_SIZE_BYTES = 1024
@@ -55,27 +56,29 @@ def calculate_energy_python(audio_data):
     """使用纯Python计算音频帧的能量"""
     if len(audio_data) == 0: return 0
     samples = [int.from_bytes(audio_data[i:i + 2], 'little', True) for i in range(0, len(audio_data), 2)]
-    return sum(s * s for s in samples) / len(samples)
+    # 对能量值进行缩放，使其更易于观察和设置阈值
+    # 原始能量可能非常大，除以一个常数（如1000）可以让阈值在几千到几万的范围
+    return sum(s * s for s in samples) / len(samples) / 1000.0
 
 
 def create_wav_header(sample_rate, bits_per_sample, num_channels, num_samples):
     """生成WAV文件头"""
     datasize = num_samples * num_channels * bits_per_sample // 8
-    o = bytes("RIFF", 'ascii')  # ChunkID
-    o += (datasize + 36).to_bytes(4, 'little')  # ChunkSize
-    o += bytes("WAVE", 'ascii')  # Format
-    o += bytes("fmt ", 'ascii')  # Subchunk1ID
-    o += (16).to_bytes(4, 'little')  # Subchunk1Size (16 for PCM)
-    o += (1).to_bytes(2, 'little')  # AudioFormat (1 for PCM)
-    o += (num_channels).to_bytes(2, 'little')  # NumChannels
-    o += (sample_rate).to_bytes(4, 'little')  # SampleRate
+    o = bytes("RIFF", 'ascii')
+    o += (datasize + 36).to_bytes(4, 'little')
+    o += bytes("WAVE", 'ascii')
+    o += bytes("fmt ", 'ascii')
+    o += (16).to_bytes(4, 'little')
+    o += (1).to_bytes(2, 'little')
+    o += (num_channels).to_bytes(2, 'little')
+    o += (sample_rate).to_bytes(4, 'little')
     byte_rate = sample_rate * num_channels * bits_per_sample // 8
-    o += (byte_rate).to_bytes(4, 'little')  # ByteRate
+    o += (byte_rate).to_bytes(4, 'little')
     block_align = num_channels * bits_per_sample // 8
-    o += (block_align).to_bytes(2, 'little')  # BlockAlign
-    o += (bits_per_sample).to_bytes(2, 'little')  # BitsPerSample
-    o += bytes("data", 'ascii')  # Subchunk2ID
-    o += (datasize).to_bytes(4, 'little')  # Subchunk2Size
+    o += (block_align).to_bytes(2, 'little')
+    o += (bits_per_sample).to_bytes(2, 'little')
+    o += bytes("data", 'ascii')
+    o += (datasize).to_bytes(4, 'little')
     return o
 
 
@@ -84,9 +87,17 @@ def call_asr_api_with_wav(wav_data):
     print("📡 正在调用API (发送完整WAV文件)...")
 
     try:
-        # --- 错误修复 ---
-        # 使用 ubinascii.b2a_base64 并去掉结尾的换行符
+        # --- 打印信息 1: 音频时长 ---
+        # 计算音频时长（秒）
+        audio_duration = len(wav_data) / (SAMPLE_RATE * BITS_PER_SAMPLE / 8)
+        print(f"   - 待识别音频时长: {audio_duration:.2f} 秒")
+        print(f"   - 待识别音频大小: {len(wav_data)} 字节")
+
+        # --- 打印信息 2: Base64编码耗时 ---
+        start_b64 = time.time()
         audio_b64 = ubinascii.b2a_base64(wav_data)[:-1].decode('utf-8')
+        duration_b64 = time.time() - start_b64
+        print(f"   - Base64编码完成，耗时: {duration_b64:.2f}s")
 
         audio_url = f"data:audio/wav;base64,{audio_b64}"
 
@@ -108,19 +119,22 @@ def call_asr_api_with_wav(wav_data):
             'Content-Type': 'application/json'
         }
 
-        start_time = time.time()
+        # --- 打印信息 3: 网络请求耗时 ---
+        start_request = time.time()
         response = requests.post(API_URL, headers=headers, data=json.dumps(payload), timeout=30)
-        api_duration = time.time() - start_time
+        duration_request = time.time() - start_request
 
         if response.status_code == 200:
             result = response.json()
             text = result['output']['choices'][0]['message']['content'][0]['text']
-            print(f"\n✅ API响应成功 (耗时: {api_duration:.2f}s)")
-            print(f"└── 识别结果: {text}")
+            print(f"\n✅ API响应成功")
+            print(f"   - 网络请求耗时: {duration_request:.2f}s")
+            print(f"   - 识别结果: {text}")
             return True
         else:
             print(f"\n❌ API错误: {response.status_code}")
-            print(f"└── 错误信息: {response.text}")
+            print(f"   - 网络请求耗时: {duration_request:.2f}s")
+            print(f"   - 错误信息: {response.text}")
             return False
 
     except Exception as e:
@@ -131,7 +145,7 @@ def call_asr_api_with_wav(wav_data):
 
 
 def real_time_asr_serial():
-    """核心的串行语音识别循环 (已修复I2S兼容性问题)"""
+    """核心的串行语音识别循环"""
     print("正在初始化I2S麦克风...")
     i2s = I2S(0, sck=SCK_PIN, ws=WS_PIN, sd=SD_PIN, mode=I2S.RX, bits=BITS_PER_SAMPLE, format=I2S.MONO,
               rate=SAMPLE_RATE, ibuf=4096)
@@ -154,6 +168,11 @@ def real_time_asr_serial():
 
                 if num_bytes_read > 0:
                     energy = calculate_energy_python(audio_frame[:num_bytes_read])
+
+                    # --- 打印信息 4: 实时能量值 ---
+                    # 为了避免刷屏太快，我们只在录音状态或能量变化明显时打印
+                    if is_recording or energy > ENERGY_THRESHOLD_SPEECH / 2:
+                        print(f"   [VAD] 能量: {energy:.2f} | 状态: {'录音中' if is_recording else '等待中'}")
 
                     if not is_recording:
                         if energy > ENERGY_THRESHOLD_SPEECH:
@@ -183,7 +202,11 @@ def real_time_asr_serial():
                 wav_header = create_wav_header(SAMPLE_RATE, BITS_PER_SAMPLE, CHANNELS, num_samples)
                 wav_data = wav_header + pcm_buffer
 
+                # --- 打印信息 5: 总API调用耗时 ---
+                start_api_total = time.time()
                 call_asr_api_with_wav(wav_data)
+                duration_api_total = time.time() - start_api_total
+                print(f"   - 本次API调用总耗时: {duration_api_total:.2f}s")
 
                 print("-" * 30)
                 print("🎤 等待下一段语音...")
