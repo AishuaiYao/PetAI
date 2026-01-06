@@ -1,45 +1,370 @@
-# 提取所有能量值
-energy_values = [
-    55065.76, 12118.67, 5246.43, 982049.50, 1413146.20, 2483679.60, 1836816.20, 2052269.60, 1891969.20, 1488751.20,
-    2267124.80, 1414445.10, 1853912.40, 1890431.40, 1468524.10, 2181153.80, 1404924.20, 1887802.56, 1903374.40, 2504088.40,
-    2335738.20, 1514658.10, 3118408.80, 2082718.04, 1516346.90, 3225688.80, 1641355.20, 2076987.44, 2713885.20, 1588771.40,
-    2403150.80, 1866055.20, 2070830.56, 2120937.80, 1507614.00, 2561661.00, 1706381.20, 3253742.40, 2387664.40, 1636730.00,
-    2479566.40, 1675282.50, 2113586.00, 2267909.60, 2726799.80, 2697533.60, 1845606.80, 2839691.60, 2206164.80, 1479780.00,
-    2490437.00, 2824000.40, 2177080.80, 2355775.80, 2345938.40, 2656382.00, 1791340.56, 2454498.80, 2330543.60, 1538829.90,
-    2670299.00, 1851761.60, 2151196.80, 2355500.80, 1594859.90, 2426867.80, 56.39, 1834371.20, 826892.60, 59.29,
-    2873477.00, 1899452.90, 1521891.60, 2723266.00, 892220.60, 1218679.00, 1818514.96, 1697622.04, 1258805.00, 2194771.00,
-    2083422.56, 1549900.20, 3361268.00, 1630612.40, 1695045.00, 1930419.10, 1272684.50, 259638.82, 1077378.40, 1945166.60,
-    52.27, 634309.60, 2474945.60, 1030587.50, 1701434.96, 2575250.40, 1169139.80, 1749244.90, 117470.66, 167288.38,
-    1357368.10, 117350.52, 1039877.10, 2312604.80, 1511347.80, 1165925.50, 2453089.00, 1293621.60, 1455660.40, 1585127.10,
-    1950158.04, 948332.08, 1048717.80, 2332151.80, 510146.74, 676336.50, 1818057.96, 117310.48, 285948.28, 2874734.00,
-    923035.04, 187.07, 1836542.04, 109142.47, 689232.50, 1162364.50, 752103.70, 1990399.80, 2803838.00, 609784.06,
-    1823854.00, 1392909.90, 1563.94, 140234.74, 271800.96, 737.01, 851.18, 1825373.80, 164.53, 315.92,
-    1529443.80, 746423.20, 843004.90, 2523583.00, 1330428.80, 1793.67, 244506.60, 2794.74, 255829.64, 795279.80,
-    306.43, 334954.94, 1736970.20, 1527990.20, 1994287.40, 2263311.20, 2140233.80, 851137.90, 2830583.20, 1261247.90,
-    1663517.10, 1908042.04, 1905560.12, 305692.34, 1763704.48, 914169.48, 115.65, 2885847.20, 2145581.20, 159.40,
-    1022158.80, 431.71, 203.38, 1594572.40, 363.30, 1630496.80, 1624725.20, 1954472.20, 1289589.80, 2067125.60,
-    758927.60, 1788789.04, 1356586.00, 1215115.80, 1014289.48, 1822651.10, 896073.04, 78.85, 2177284.80, 1121879.60,
-    162.71, 2922175.60, 900229.00, 184075.70, 2886249.20, 406782.74, 466.17, 1151334.90, 598.92, 1275867.50,
-    652253.80, 393120.00, 1692538.00, 1289058.00, 1157798.80, 1720136.20, 1058527.90, 1506372.80, 369490.10, 2245869.80,
-    1479200.80, 62.82, 2006255.80, 501631.76, 504389.50, 1793139.40, 448266.86, 310.36, 2456305.20, 815063.26,
-    1072140.80, 402.12, 110.61, 1388431.80, 943127.76, 1273849.10, 2398209.00, 967994.60, 1787229.44, 1269169.20,
-    1723935.60, 1596912.50, 518114.60, 2423897.00, 1171675.10, 225757.38, 1781894.04, 349927.36, 245746.46, 1559456.80,
-    424825.32, 370.56, 2585166.40, 732224.06, 1140054.80, 308149.56, 579751.20, 2009940.00, 690856.22, 1526409.80,
-    1843429.20, 1329550.40, 1540736.00, 684048.30, 1719057.00, 1242469.50, 501567.40, 2249740.80, 1007933.48, 781080.92,
-    1349953.40, 1067920.10, 296676.22, 1834297.80, 1134096.10, 273314.56, 2637534.80, 750416.70, 1231697.10, 381730.10,
-    590951.72, 1419806.50, 996081.70, 736813.92, 1669948.60, 1332131.60, 515273.02, 1635968.80, 1633083.10, 750296.50,
-    1444515.90, 1346969.00, 1098382.80, 437570.86, 1958550.88, 1248604.40, 822440.10, 2127515.60, 339992.00, 915481.10,
-    2158608.40, 284190.10, 33905.18, 58933.38, 1139181.20, 572849.72, 804530.22, 1204325.80, 1993607.00, 855377.28,
-    1124407.90, 2028413.80, 1115953.50, 708656.72, 1259682.90, 1901254.88, 351073.20
-]
+# esp32_s3_asr_send_wav.py
+import time
+import ujson as json
+import urequests as requests
+import ubinascii
+from machine import I2S, Pin
+import network
+import array
 
-# 计算总共有多少个值
-total_count = len(energy_values)
+# --- 1. 配置区域 ---
+# Wi-Fi 配置
+WIFI_SSID = "CMCC-huahua"
+WIFI_PASSWORD = "*HUAHUAshi1zhimao"
 
-# 计算大于800000的值的个数
-values_above_800000 = [value for value in energy_values if value > 2000000]
-count_above_800000 = len(values_above_800000)
+# 阿里云通义千问API配置
+API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
+MODEL_NAME = "qwen3-asr-flash"
+API_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 
-print(f"总共有 {total_count} 个能量值")
-print(f"大于 800000 的能量值有 {count_above_800000} 个")
+# I2S麦克风 (INMP441) 配置
+SAMPLE_RATE = 16000
+I2S_BITS = 32  # INMP441固定输出32位帧
+ACTUAL_BITS_PER_SAMPLE = 16  # 我们实际存储16位数据
+CHANNELS = 1
 
+# 根据您的连接修改引脚
+SCK_PIN = Pin(42)
+WS_PIN = Pin(41)
+SD_PIN = Pin(40)
+
+# VAD 参数（调整阈值）
+SILENCE_THRESHOLD = 0.5  # 秒
+MIN_SPEECH_DURATION = 0.3  # 秒
+ENERGY_THRESHOLD_HIGH = 40000  # 降低阈值
+ENERGY_THRESHOLD_LOW = 30000  # 降低阈值
+
+# 音频处理参数
+CHUNK_SIZE = 3200  # 与 asr.py 保持一致
+BYTES_PER_SAMPLE = 2  # 16位 = 2字节
+I2S_BYTES_PER_SAMPLE = 4  # 32位 = 4字节
+
+
+# --- 2. 辅助函数 ---
+
+def connect_wifi():
+    """连接到Wi-Fi网络"""
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    if not wlan.isconnected():
+        print(f'正在连接到Wi-Fi: {WIFI_SSID}...')
+        wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+        while not wlan.isconnected():
+            time.sleep(0.5)
+            print('.', end='')
+    print('\nWi-Fi连接成功！')
+    print('网络配置:', wlan.ifconfig())
+
+
+def process_inmp441_data(raw_data):
+    """
+    处理INMP441的32位数据，提取有效的24位音频数据并转换为16位
+    INMP441输出：32位帧，其中24位是有效音频数据（补码格式），8位补零
+    数据格式：大端，MSB对齐
+    """
+    processed_data = bytearray()
+
+    # 每4个字节（32位）处理一次
+    for i in range(0, len(raw_data), 4):
+        if i + 3 < len(raw_data):
+            # INMP441输出是大端，32位帧：
+            # 字节0: 最高有效位 (MSB) - 24位数据的最高8位
+            # 字节1: 中间8位
+            # 字节2: 最低有效位 (LSB) - 24位数据的最低8位
+            # 字节3: 补零 (通常为0x00)
+
+            # 读取24位有符号整数（补码）
+            # 注意：24位数据存储在字节0-2，字节3是填充
+            b0 = raw_data[i]  # MSB
+            b1 = raw_data[i + 1]
+            b2 = raw_data[i + 2]  # LSB
+
+            # 将24位补码转换为32位有符号整数
+            # 如果最高位是1（负数），需要符号扩展
+            if b0 & 0x80:  # 检查最高位
+                # 负数：符号扩展
+                sample_24bit = (b0 << 16) | (b1 << 8) | b2
+                # 符号扩展到32位
+                if sample_24bit & 0x800000:  # 检查24位的最高位
+                    sample_32bit = sample_24bit | 0xFF000000  # 扩展符号位
+                else:
+                    sample_32bit = sample_24bit
+            else:
+                # 正数
+                sample_32bit = (b0 << 16) | (b1 << 8) | b2
+
+            # 转换为有符号32位整数
+            if sample_32bit & 0x80000000:
+                sample_32bit = sample_32bit - 0x100000000
+
+            # 将32位缩放到16位（右移8位，因为INMP441的24位数据对齐到32位的高24位）
+            sample_16bit = sample_32bit >> 8
+
+            # 限制在16位范围内
+            if sample_16bit > 32767:
+                sample_16bit = 32767
+            elif sample_16bit < -32768:
+                sample_16bit = -32768
+
+            # 转换为16位小端字节（WAV格式通常是小端）
+            sample_bytes = sample_16bit.to_bytes(2, 'little', True)
+            processed_data.extend(sample_bytes)
+
+    return processed_data
+
+
+def calculate_energy(audio_data):
+    """计算音频能量（处理16位数据）"""
+    if len(audio_data) < 2:
+        return 0
+
+    energy_sum = 0
+    sample_count = 0
+
+    # 将字节数据转换为16位整数（小端，有符号）
+    for i in range(0, len(audio_data), 2):
+        if i + 1 < len(audio_data):
+            # 读取16位有符号整数（小端）
+            sample = int.from_bytes(audio_data[i:i + 2], 'little', True)
+
+            # 计算平方（能量）
+            energy_sum += sample * sample
+            sample_count += 1
+
+    if sample_count > 0:
+        return energy_sum / sample_count
+    return 0
+
+
+def print_energy_bar(energy, max_energy=10000, width=20):
+    """打印简化的能量条（适配 MicroPython）"""
+    level = min(int((energy / max_energy) * width), width)
+    bar = '█' * level + '░' * (width - level)
+    status = "🔊 SPEAKING" if energy > ENERGY_THRESHOLD_HIGH else "🔈 LISTENING"
+    print(f"\r[{bar}] {energy:6.0f} {status}", end='')
+
+
+def create_wav_header(sample_rate, bits_per_sample, num_channels, num_samples):
+    """生成WAV文件头"""
+    datasize = num_samples * num_channels * bits_per_sample // 8
+    o = bytes("RIFF", 'ascii')
+    o += (datasize + 36).to_bytes(4, 'little')
+    o += bytes("WAVE", 'ascii')
+    o += bytes("fmt ", 'ascii')
+    o += (16).to_bytes(4, 'little')
+    o += (1).to_bytes(2, 'little')  # PCM格式
+    o += (num_channels).to_bytes(2, 'little')
+    o += (sample_rate).to_bytes(4, 'little')
+    byte_rate = sample_rate * num_channels * bits_per_sample // 8
+    o += (byte_rate).to_bytes(4, 'little')
+    block_align = num_channels * bits_per_sample // 8
+    o += (block_align).to_bytes(2, 'little')
+    o += (bits_per_sample).to_bytes(2, 'little')
+    o += bytes("data", 'ascii')
+    o += (datasize).to_bytes(4, 'little')
+    return o
+
+
+def call_asr_api_with_wav(wav_data):
+    """调用ASR API，发送一个完整的WAV文件。"""
+    print("\n📡 正在调用API (发送完整WAV文件)...")
+
+    try:
+        # 计算音频时长（秒）
+        audio_duration = len(wav_data) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+        print(f"   - 音频时长: {audio_duration:.2f}秒")
+        print(f"   - 音频大小: {len(wav_data)}字节")
+
+        # Base64编码
+        start_b64 = time.time()
+        audio_b64 = ubinascii.b2a_base64(wav_data)[:-1].decode('utf-8')
+        duration_b64 = time.time() - start_b64
+        print(f"   - Base64编码耗时: {duration_b64:.2f}s")
+
+        audio_url = f"data:audio/wav;base64,{audio_b64}"
+
+        payload = {
+            "model": MODEL_NAME,
+            "input": {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [{"audio": audio_url}]
+                    }
+                ]
+            },
+            "parameters": {"result_format": "message"}
+        }
+
+        headers = {
+            'Authorization': f'Bearer {API_KEY}',
+            'Content-Type': 'application/json'
+        }
+
+        # 发送请求
+        start_request = time.time()
+        response = requests.post(API_URL, headers=headers, data=json.dumps(payload), timeout=30)
+        duration_request = time.time() - start_request
+
+        if response.status_code == 200:
+            result = response.json()
+            text = result['output']['choices'][0]['message']['content'][0]['text']
+            print(f"\n✅ API响应成功")
+            print(f"   - 网络请求耗时: {duration_request:.2f}s")
+            print(f"   - 识别结果: {text}")
+            return text, True
+        else:
+            print(f"\n❌ API错误: {response.status_code}")
+            print(f"   - 网络请求耗时: {duration_request:.2f}s")
+            print(f"   - 错误信息: {response.text}")
+            return None, False
+
+    except Exception as e:
+        print(f"\n❌ API调用异常: {e}")
+        import sys
+        sys.print_exception(e)
+        return None, False
+
+
+def real_time_asr_serial():
+    """核心的串行语音识别循环"""
+    print("正在初始化I2S麦克风...")
+    # 使用32位读取INMP441
+    i2s = I2S(0, sck=SCK_PIN, ws=WS_PIN, sd=SD_PIN, mode=I2S.RX, bits=I2S_BITS, format=I2S.MONO,
+              rate=SAMPLE_RATE, ibuf=4096)
+
+    # 计算帧时长
+    # 每次读取的原始数据大小（字节）
+    raw_chunk_size = CHUNK_SIZE * 2  # CHUNK_SIZE是16位数据大小，32位需要2倍
+    frame_duration = CHUNK_SIZE / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
+    vad_state = "SILENT"
+    speech_buffer = bytearray()
+    silence_frames = 0
+    speech_frames = 0
+    call_count = 0
+    last_text = ""
+
+    print("\n🎤 开始录音，VAD模式... (Ctrl+C停止)")
+    print(f"I2S配置: {I2S_BITS}位帧，提取有效的24位音频数据并转换为16位")
+    print("=" * 50)
+    print("能量显示（实时更新）:")
+
+    try:
+        while True:
+            # 读取原始32位数据
+            raw_frame = bytearray(raw_chunk_size)
+            num_bytes_read = i2s.readinto(raw_frame)
+
+            if num_bytes_read > 0:
+                # 处理INMP441数据，转换为16位
+                processed_frame = process_inmp441_data(raw_frame[:num_bytes_read])
+
+                # 计算能量
+                energy = calculate_energy(processed_frame)
+
+                # 打印能量条
+                print_energy_bar(energy)
+
+                # VAD 状态机
+                if vad_state == "SILENT":
+                    if energy > ENERGY_THRESHOLD_HIGH:
+                        speech_frames += 1
+                        if speech_frames * frame_duration >= MIN_SPEECH_DURATION:
+                            vad_state = "SPEAKING"
+                            print(f"\n\n🔊 检测到语音开始 (能量: {energy:.0f})")
+                            speech_buffer.extend(processed_frame)
+                    else:
+                        speech_frames = 0
+
+                elif vad_state == "SPEAKING":
+                    speech_buffer.extend(processed_frame)
+
+                    if energy < ENERGY_THRESHOLD_LOW:
+                        silence_frames += 1
+                        if silence_frames * frame_duration >= SILENCE_THRESHOLD:
+                            vad_state = "SILENT"
+                            silence_frames = 0
+                            speech_frames = 0
+
+                            if len(speech_buffer) > 0:
+                                call_count += 1
+                                audio_duration = len(speech_buffer) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
+                                print(f"\n\n📊 第{call_count}次调用")
+                                print(f"语音段: {audio_duration:.2f}秒 ({len(speech_buffer)}字节)")
+
+                                # 创建 WAV 文件
+                                num_samples = len(speech_buffer) // BYTES_PER_SAMPLE
+                                wav_header = create_wav_header(SAMPLE_RATE, ACTUAL_BITS_PER_SAMPLE, CHANNELS,
+                                                               num_samples)
+                                wav_data = wav_header + speech_buffer
+
+                                # 调用 API
+                                start_time = time.time()
+                                text, success = call_asr_api_with_wav(wav_data)
+                                api_duration = time.time() - start_time
+
+                                print(f"API总耗时: {api_duration:.2f}秒")
+
+                                if success and text:
+                                    print(f"✅ 识别结果: {text}")
+                                    last_text = text
+                                else:
+                                    print(f"❌ 识别失败")
+
+                                print("-" * 50)
+                                speech_buffer = bytearray()
+                                print("\n继续监听...")
+                    else:
+                        silence_frames = 0
+
+    except KeyboardInterrupt:
+        print("\n\n" + "=" * 50)
+        print("🛑 识别结束")
+        print(f"总调用次数: {call_count}")
+        if last_text:
+            print(f"最后识别结果: {last_text}")
+    except Exception as e:
+        print(f"\n\n🛑 程序发生错误: {e}")
+        import sys
+        sys.print_exception(e)
+    finally:
+        i2s.deinit()
+        print("I2S已关闭。")
+
+
+# --- 测试函数 ---
+def test_inmp441_data():
+    """测试INMP441数据读取和处理"""
+    print("测试INMP441数据读取...")
+
+    i2s = I2S(0, sck=SCK_PIN, ws=WS_PIN, sd=SD_PIN, mode=I2S.RX, bits=I2S_BITS, format=I2S.MONO,
+              rate=SAMPLE_RATE, ibuf=4096)
+
+    print("读取10帧数据测试:")
+    for i in range(10):
+        raw_data = bytearray(128)  # 32个样本 * 4字节
+        num_bytes = i2s.readinto(raw_data)
+
+        if num_bytes > 0:
+            processed = process_inmp441_data(raw_data[:num_bytes])
+            energy = calculate_energy(processed)
+
+            # 显示原始数据的前几个字节
+            print(f"帧{i}: 原始[{raw_data[0]:02X} {raw_data[1]:02X} {raw_data[2]:02X} {raw_data[3]:02X}] "
+                  f"-> 能量: {energy:.0f}")
+
+        time.sleep_ms(100)
+
+    i2s.deinit()
+
+
+# --- 主程序入口 ---
+if __name__ == "__main__":
+    connect_wifi()
+
+    # 可选：先运行测试
+    # test_inmp441_data()
+
+    real_time_asr_serial()
