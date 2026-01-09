@@ -109,3 +109,24 @@ finally:
     i2s.deinit()
     print("Amplifier disabled")
     print("Test finished")
+
+
+
+# >>> %Run -c $EDITOR_CONTENT
+#
+# MPY: soft reboot
+# Initializing MAX98375...
+# SD: GPIO21, GAIN: GPIO47
+# Amplifier ENABLED
+# Gain set to 9dB
+#
+# === MAX98375 I2S Test ===
+# Playing 880Hz tone...
+# Press Ctrl+C to stop
+# Playing... 120s elapsed
+#
+# Stopping test...
+# Amplifier DISABLED
+# Amplifier disabled
+# Test finished
+# >>>
