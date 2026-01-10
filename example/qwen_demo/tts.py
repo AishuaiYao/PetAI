@@ -13,7 +13,7 @@ stream = p.open(format=pyaudio.paInt16,
                 rate=24000,
                 output=True)
 
-text = "这个错误的意思是"
+text = "你好作者你好啊，现在是tts测试"
 response = dashscope.MultiModalConversation.call(
     api_key='sk-943f95da67d04893b70c02be400e2935',
     model="qwen3-tts-flash",
@@ -36,7 +36,7 @@ for chunk in response:
             print("TTS音频收集完成")
 
 # 保存纯裸PCM文件（无WAV头，后缀名.pcm）
-with open("tts_raw.pcm", "wb") as f:
+with open("tts_raw", "wb") as f:
     f.write(all_audio_pcm)
 print("纯裸PCM文件已生成：tts_raw.pcm（16位单声道24000Hz）")
 
