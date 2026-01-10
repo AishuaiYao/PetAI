@@ -33,22 +33,6 @@ BITS = 16
 CHANNELS = 1
 
 
-# ===================== 调试保存函数 =====================
-def save_sse_data(sse_data, prefix):
-    """保存SSE数据到文件，用于调试"""
-    global SSE_SAVE_COUNT
-    if not DEBUG_SAVE_SSE:
-        return
-
-    SSE_SAVE_COUNT += 1
-
-    filename = f"sse_debug_{SSE_SAVE_COUNT}_{prefix}.txt"
-    with open(filename, "wb") as f:
-        f.write(sse_data)
-    print(f"[DEBUG] 已保存: {filename}, 大小: {len(sse_data)}")
-
-
-
 # ===================== Base64解码 =====================
 _b64chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
@@ -73,7 +57,6 @@ def base64_decode(s):
 # ===================== I2S音频初始化 =====================
 def init_audio():
     """初始化MAX98375功放和I2S（参考test_speaker.py）"""
-    from machine import I2S, Pin
     amp_pin = Pin(AMP_ENABLE_PIN, Pin.OUT)
     amp_pin.value(1)  # 启用功放
     i2s = I2S(
@@ -128,48 +111,15 @@ def connect_wifi():
     return False
 
 
-# ===================== 响应校验函数 =====================
-def validate_response(data):
-    """
-    校验TTS API返回的数据是否正常
-    返回: (is_valid: bool, error_msg: str)
-    """
-
-    # 检查是否包含output字段
-    if "output" not in data:
-        return False, "响应缺少'output'字段"
-
-    output = data["output"]
-
-    # 检查finish_reason（注意：API返回的"null"可能是字符串、整数或None，表示流继续）
-    finish_reason = output.get("finish_reason")
-
-    # 转换为字符串处理
-    if finish_reason is None:
-        return True, "流继续中"
-
-    finish_reason_str = str(finish_reason)
-    if finish_reason_str == "stop" or finish_reason_str == "1":
-        return True, "流式传输正常完成"
-    elif finish_reason_str and finish_reason_str not in ["null", "0", "None"]:
-        return False, "流提前结束，原因: " + finish_reason_str
-
-    # 检查audio数据
-    audio_info = output.get("audio", {})
-    if "data" in audio_info:
-        audio_data = audio_info["data"]
-        # 检查是否为base64格式（非空字符串即为有效）
-        if isinstance(audio_data, str) and len(audio_data) > 0:
-            return True, "音频数据正常，长度: " + str(len(audio_data))
-        else:
-            # 空字符串也认为是正常的（可能是间隔包）
-            return True, "音频数据为空（间隔包）"
+def extract_base64(row_data):
+    base64 = ''
+    if 'data":"' in row_data:
+        row_data = row_data.split('data":"')[-1]
+    if "expires_at" in row_data:
+        base64 = row_data.split('","expires')[0]
     else:
-        # 如果没有audio数据但有其他字段，也算正常
-        return True, "响应包含音频相关字段"
-
-    return False, "未知响应格式"
-
+        base64 = row_data
+    return base64
 
 
 # ===================== TTS API请求（带实时播放） =====================
@@ -190,7 +140,6 @@ def tts_api_request(text):
     audio_chunks = 0
     validation_results = []
     response_received = False
-
 
     # 2. 建立SSL连接
     print(f"[API] 连接TTS API: {API_HOST}:{API_PORT}")
@@ -231,232 +180,49 @@ def tts_api_request(text):
     sock.write(payload_bytes)
     print(f"[API] TTS请求已发送，文本: {text}")
 
-    # 5. 接收并解析流式响应
-    response_buffer = b""
-    stream_continue = True
-    headers_parsed = False  # 标记HTTP响应头是否已解析
-    sse_accumulator = b""  # 累积SSE数据（处理长JSON被分包的情况）
-
-    while stream_continue:
-
+    cnt = 0
+    x = []
+    while True:
         chunk = sock.read(1024)
-
-
+        print(f'第{cnt}次\n')
+        cnt += 1
         if not chunk:
             break
-        response_received = True
+        row_data = chunk.decode('utf-8', 'ignore')
+        base64 = extract_base64(row_data)
+        # x.append(base64)
+    # filename = f"temp.txt"
+    # with open(filename, "w") as f:
+    #     for i, text in enumerate(x):
+    #         f.write(f"\n第{i}次")
+    #         f.write(text)
 
-        response_buffer += chunk
-
-        # 跳过HTTP响应头（找到空行后才开始解析SSE）
-        if not headers_parsed:
-            if b"\r\n\r\n" in response_buffer:
-                # 找到响应头结束位置
-                headers_end = response_buffer.index(b"\r\n\r\n") + 4
-                headers = response_buffer[:headers_end].decode('utf-8', 'ignore')
-                response_buffer = response_buffer[headers_end:]
-                headers_parsed = True
-
-                # 检查HTTP状态码
-                first_line = headers.split('\r\n')[0]
-                print(f"[API] HTTP响应: {first_line}")
-                if "200" not in first_line:
-                    print(f"[API] HTTP错误响应:\n{headers[:500]}")
-                    break
-            else:
-                # 继续读取直到收到完整响应头
-                continue
-
-        # 按行解析SSE
-        while b"\n" in response_buffer and stream_continue:
-            line, response_buffer = response_buffer.split(b"\n", 1)
-            line_stripped = line.strip()
-
-            # 空行表示一个SSE事件的结束，尝试解析累积的数据
-            if not line_stripped:
-                if sse_accumulator:
-                    # 解析累积的数据
-                    sse_data = sse_accumulator
-                    sse_accumulator = b""
-
-                    if sse_data == b'[DONE]':
-                        print("[API] 收到流结束标记")
-                        break
-
-                    # 跳过过短的数据（不完整的数据）
-                    if len(sse_data) < 50:
-                        sse_accumulator = b""
-                        continue
-
-                    # 保存调试数据
-                    save_sse_data(sse_data, f"{SSE_SAVE_COUNT}")
-
-                    # 解析JSON并校验
-
-                    data_str = sse_data.decode('utf-8')
-                    print(data_str)
-                    data = json.loads(data_str)
-
-                    # 保存成功解析的JSON
-                    # save_sse_data(json.dumps(data).encode('utf-8'), f"success_{SSE_SAVE_COUNT}")
-
-                    # 调用校验函数
-                    is_valid, error_msg = validate_response(data)
-                    validation_results.append({
-                        "valid": is_valid,
-                        "message": error_msg,
-                        "data_keys": list(data.keys())
-                    })
-
-                    print(f"[校验] 结果: {'✓' if is_valid else '✗'} | {error_msg}")
-
-                    # 检查流结束
-                    if "output" in data:
-                        output = data["output"]
-                        if output.get("finish_reason") == "stop":
-                            print("[API] 流式传输完成")
-                            stream_continue = False
-                            break
-
-                        # 解码并播放音频
-                        audio_info = output.get("audio", {})
-                        if "data" in audio_info:
-                            audio_base64 = audio_info["data"]
-                            if audio_base64:  # 非空音频数据
-                                audio_chunks += 1
-                                print(f"[API] 收到音频块 #{audio_chunks}")
-
-                                # Base64解码
-                                audio_bytes = base64_decode(audio_base64.encode('utf-8'))
-                                print(f"[AUDIO] 解码音频数据，大小: {len(audio_bytes)} 字节")
-
-                                # I2S播放（参考test_speaker.py的播放逻辑）
-                                offset = 0
-                                while offset < len(audio_bytes):
-                                    chunk_len = min(buf_size, len(audio_bytes) - offset)
-                                    # 确保是偶数长度（16位=2字节/样本）
-                                    if chunk_len % 2 != 0:
-                                        chunk_len -= 1
-                                    if chunk_len <= 0:
-                                        break
-
-                                    play_buf[:chunk_len] = audio_bytes[offset:offset + chunk_len]
-                                    written = 0
-                                    while written < chunk_len:
-                                        written += i2s.write(play_buf, chunk_len)
-                                    offset += chunk_len
-                                print(f"[AUDIO] 播放完成音频块 #{audio_chunks}")
+        # 跳过过短的数据（不完整的数据）
+        if len(base64) < 50:
+            continue
 
 
-            # 处理以 'data:' 开头的行
-            if line_stripped.startswith(b'data:'):
-                data_content = line_stripped[5:].strip()
+        audio_bytes = base64_decode(base64)
+        print(f"[AUDIO] 解码音频数据，大小: {len(audio_bytes)} 字节")
 
-                # 检查是否是结束标记
-                if data_content == b'[DONE]':
-                    print("[API] 收到流结束标记")
-                    stream_continue = False
-                    break
+        # I2S播放（参考test_speaker.py的播放逻辑）
+        offset = 0
+        while offset < len(audio_bytes):
+            chunk_len = min(buf_size, len(audio_bytes) - offset)
+            # 确保是偶数长度（16位=2字节/样本）
+            if chunk_len % 2 != 0:
+                chunk_len -= 1
+            if chunk_len <= 0:
+                break
 
-                # 如果累积器不为空，说明遇到了新事件，先解析之前的数据
-                if sse_accumulator and len(sse_accumulator) >= 50:
-                    # 尝试解析之前累积的数据
-                    sse_data = sse_accumulator
-                    sse_accumulator = b""
+            play_buf[:chunk_len] = audio_bytes[offset:offset + chunk_len]
+            written = 0
+            while written < chunk_len:
+                written += i2s.write(play_buf, chunk_len)
+            offset += chunk_len
+        print(f"[AUDIO] 播放完成音频块 #{audio_chunks}")
 
-                    # 保存调试数据
-                    save_sse_data(sse_data, "new_data")
-
-
-                    data_str = sse_data.decode('utf-8')
-                    data = json.loads(data_str)
-
-                    # 保存成功解析的JSON
-                    save_sse_data(json.dumps(data).encode('utf-8'), f"success_{SSE_SAVE_COUNT}")
-
-                    # 调用校验函数
-                    is_valid, error_msg = validate_response(data)
-                    validation_results.append({
-                        "valid": is_valid,
-                        "message": error_msg,
-                        "data_keys": list(data.keys())
-                    })
-
-                    print(f"[校验] 结果: {'✓' if is_valid else '✗'} | {error_msg}")
-
-                    # 检查流结束
-                    if "output" in data:
-                        output = data["output"]
-                        if output.get("finish_reason") == "stop":
-                            print("[API] 流式传输完成")
-                            stream_continue = False
-                            break
-
-                        # 解码并播放音频
-                        audio_info = output.get("audio", {})
-                        if "data" in audio_info:
-                            audio_base64 = audio_info["data"]
-                            if audio_base64:  # 非空音频数据
-                                audio_chunks += 1
-                                print(f"[API] 收到音频块 #{audio_chunks}")
-
-                                # Base64解码
-                                audio_bytes = base64_decode(audio_base64.encode('utf-8'))
-                                print(f"[AUDIO] 解码音频数据，大小: {len(audio_bytes)} 字节")
-
-                                # I2S播放（参考test_speaker.py的播放逻辑）
-                                offset = 0
-                                while offset < len(audio_bytes):
-                                    chunk_len = min(buf_size, len(audio_bytes) - offset)
-                                    # 确保是偶数长度（16位=2字节/样本）
-                                    if chunk_len % 2 != 0:
-                                        chunk_len -= 1
-                                    if chunk_len <= 0:
-                                        break
-
-                                    play_buf[:chunk_len] = audio_bytes[offset:offset + chunk_len]
-                                    written = 0
-                                    while written < chunk_len:
-                                        written += i2s.write(play_buf, chunk_len)
-                                    offset += chunk_len
-                                print(f"[AUDIO] 播放完成音频块 #{audio_chunks}")
-
-
-
-                # 累积新数据
-                if data_content:
-                    sse_accumulator += data_content
-
-            # 跳过其他SSE元数据行（id, event等）
-
-    return True, audio_chunks, validation_results
-
-
-
-# ===================== 打印校验报告 =====================
-def print_validation_report(audio_chunks, validation_results):
-    """打印详细的校验报告"""
-    print("\n" + "=" * 50)
-    print("校验报告")
-    print("=" * 50)
-
-    # 统计
-    total = len(validation_results)
-    valid_count = sum(1 for r in validation_results if r["valid"])
-    invalid_count = total - valid_count
-
-    print(f"总共收到的数据块: {total}")
-    print(f"音频块数量: {audio_chunks}")
-    print(f"校验通过: {valid_count}")
-    print(f"校验失败: {invalid_count}")
-
-    if invalid_count > 0:
-        print("\n失败的校验项:")
-        for i, r in enumerate(validation_results, 1):
-            if not r["valid"]:
-                print(f"  #{i}: {r.get('message', 'Unknown')}")
-
-    print("=" * 50)
+    return True, audio_chunks
 
 
 # ===================== 主程序 =====================
@@ -466,24 +232,16 @@ def main():
     print("ESP32 TTS 流式播放程序")
     print("=" * 50)
 
-    success, audio_chunks, validation_results = tts_api_request(TEXT)
+    success, audio_chunks = tts_api_request(TEXT)
 
     if success:
         print("\n[结果] API请求成功完成")
-        print_validation_report(audio_chunks, validation_results)
-
-        # 最终判断
-        all_valid = all(r["valid"] for r in validation_results)
-        if all_valid and audio_chunks > 0:
-            print("\n✅ 所有校验通过！API返回正常")
-        else:
-            print("\n⚠️ 部分校验未通过，请查看上方报告")
-    else:
-        print("\n❌ API请求失败")
 
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
