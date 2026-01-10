@@ -1,55 +1,24 @@
-import machine
 import math
 from machine import I2S, Pin
 
-# 核心引脚定义（仅保留必须的）
-lrc_pin = Pin(10)
-sck_pin = Pin(9)
-dout_pin = Pin(8)
-sd_pin = Pin(21, Pin.OUT)
+# 引脚+功放启用
+Pin(21, Pin.OUT).value(1)
 
-# 启用功放（直接设置电平，去掉函数封装）
-sd_pin.value(1)  # MAX98375 SD引脚置高，启用功放
+# I2S初始化（添加必填的ibuf参数）
+i2s = I2S(0, sck=Pin(9), ws=Pin(10), sd=Pin(8), mode=I2S.TX, bits=16, format=I2S.STEREO, rate=44100, ibuf=10000)
 
-# 初始化I2S（最简配置）
-i2s = I2S(
-    0,
-    sck=sck_pin,
-    ws=lrc_pin,
-    sd=dout_pin,
-    mode=I2S.TX,
-    bits=16,
-    format=I2S.STEREO,
-    rate=44100,
-    ibuf=10000  # 减小缓冲区，简化配置
-)
+# 生成音频缓冲区
+buf = bytearray(128*4)
+p, pi = 0.0, 2*math.pi*440/44100
+for i in range(0, len(buf), 4):
+    s = int(3000*math.sin(p))
+    buf[i:i+4] = bytes([s&0xff, (s>>8)&0xff, s&0xff, (s>>8)&0xff])
+    p = p+pi if p<2*math.pi else 0
 
-# 音频核心参数（仅保留必要的）
-SAMPLE_RATE = 44100
-TONE_FREQ = 440  # 440Hz（A调），更柔和易听
-AMPLITUDE = 3000
-BUFFER_SIZE = 128  # 减小缓冲区，简化
-
-# 生成基础正弦波缓冲区（提前生成一次，循环使用）
-buffer = bytearray(BUFFER_SIZE * 4)
-phase = 0.0
-phase_inc = 2 * math.pi * TONE_FREQ / SAMPLE_RATE
-for i in range(0, len(buffer), 4):
-    sample = int(AMPLITUDE * math.sin(phase))
-    # 16位立体声小端序填充
-    buffer[i] = sample & 0xFF
-    buffer[i + 1] = (sample >> 8) & 0xFF
-    buffer[i + 2] = sample & 0xFF
-    buffer[i + 3] = (sample >> 8) & 0xFF
-    phase += phase_inc
-    if phase > 2 * math.pi:
-        phase -= 2 * math.pi
-
-# 无限循环输出音频（核心功能）
+# 持续发声
 try:
-    while True:
-        i2s.write(buffer)  # 持续发送音频缓冲区
-except KeyboardInterrupt:
-    # 仅保留必要的清理
-    sd_pin.value(0)  # 关闭功放
+    while 1:
+        i2s.write(buf)
+except:
+    Pin(21, Pin.OUT).value(0)
     i2s.deinit()
