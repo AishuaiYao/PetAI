@@ -32,25 +32,53 @@ SAMPLE_RATE = 24000
 BITS = 16
 CHANNELS = 1
 
-
 # ===================== Base64解码 =====================
 _b64chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+_b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 
 def base64_decode(s):
     """轻量级base64解码（Micropython兼容）"""
-    s = s.rstrip(b'=')
+    # 关键修复：将str类型转换为bytes类型
+    # if isinstance(s, str):
+    #    s = s.encode('utf-8')
+    # s = s.rstrip(b'=')
     res = bytearray()
+
     for i in range(0, len(s), 4):
         chunk = s[i:i + 4]
         while len(chunk) < 4:
-            chunk += b'='
-        idx = [_b64chars.find(c) for c in chunk]
-        b = (idx[0] << 18) | (idx[1] << 12) | (idx[2] << 6) | idx[3]
-        res.extend(struct.pack('!I', b)[1:])
-    pad = len(s) % 4
-    if pad:
-        del res[-pad:]
+            chunk += '='
+        # 核心修复：直接用字节值c（int）查找，无需转字符串
+        # bytes.find() 接受 int 类型的参数（对应ASCII码）
+        chunk_len = len(chunk)
+        try:
+            idx = []
+            for c in chunk:
+                item = _b64chars.find(c)
+                idx.append(item)
+            # idx = [_b64chars.find(c) for c in chunk]
+        except:
+            print("不出")
+            print(c)
+
+        # 处理无效Base64字符（find返回-1的情况）
+        if -1 in idx:
+            continue
+        combined = (idx[0] << 18) | (idx[1] << 12) | (idx[2] << 6) | idx[3]
+        # res.extend(struct.pack('<I', b)[:3])
+        # 根据chunk长度提取有效字节（修复截断问题）
+        # 4个字符 -> 3字节, 3个字符 -> 2字节, 2个字符 -> 1字节
+        if chunk_len == 4:
+            res.append((combined >> 16) & 0xFF)
+            res.append((combined >> 8) & 0xFF)
+            res.append(combined & 0xFF)
+        elif chunk_len == 3:
+            res.append((combined >> 16) & 0xFF)
+            res.append((combined >> 8) & 0xFF)
+        elif chunk_len == 2:
+            res.append((combined >> 16) & 0xFF)
+
     return bytes(res)
 
 
@@ -191,16 +219,15 @@ def tts_api_request(text):
         row_data = chunk.decode('utf-8', 'ignore')
         base64 = extract_base64(row_data)
         # x.append(base64)
-    # filename = f"temp.txt"
-    # with open(filename, "w") as f:
-    #     for i, text in enumerate(x):
-    #         f.write(f"\n第{i}次")
-    #         f.write(text)
+        # filename = f"temp.txt"
+        # with open(filename, "w") as f:
+        #     for i, text in enumerate(x):
+        #         f.write(f"\n第{i}次")
+        #         f.write(text)
 
         # 跳过过短的数据（不完整的数据）
         if len(base64) < 50:
             continue
-
 
         audio_bytes = base64_decode(base64)
         print(f"[AUDIO] 解码音频数据，大小: {len(audio_bytes)} 字节")
@@ -220,7 +247,14 @@ def tts_api_request(text):
             while written < chunk_len:
                 written += i2s.write(play_buf, chunk_len)
             offset += chunk_len
+        audio_chunks += 1  # 修复：增加音频块计数
         print(f"[AUDIO] 播放完成音频块 #{audio_chunks}")
+
+    # 修复：关闭音频资源
+    deinit_audio(i2s, amp_pin)
+    # 修复：关闭socket连接
+    if sock:
+        sock.close()
 
     return True, audio_chunks
 
@@ -235,13 +269,8 @@ def main():
     success, audio_chunks = tts_api_request(TEXT)
 
     if success:
-        print("\n[结果] API请求成功完成")
+        print("\n[结果] API请求成功完成，共播放 {} 个音频块".format(audio_chunks))
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
