@@ -3,6 +3,8 @@ import json
 import struct
 import time
 import network
+import binascii  # 必须导入这个模块
+
 from machine import I2S, Pin
 
 # ===================== 核心配置 =====================
@@ -10,9 +12,10 @@ from machine import I2S, Pin
 WIFI_SSID = "CMCC-huahua"
 WIFI_PASSWORD = "*HUAHUAshi1zhimao"
 API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
-TEXT = "测试文本"
+TEXT = "你好作者你好啊，现在是tts测试"
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
+RECV_BUFFER_SIZE = 65536
 
 # 调试配置
 DEBUG_SAVE_SSE = True  # 是否保存SSE数据到文件
@@ -32,83 +35,42 @@ SAMPLE_RATE = 24000
 BITS = 16
 CHANNELS = 1
 
-# ===================== Base64解码 =====================
-_b64chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-_b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
+def base64_decode(base64_str):
+    # 关键1：先清理无效字符（只保留Base64允许的字符）
+    valid_chars = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
+    base64_str = ''.join([c for c in base64_str if c in valid_chars])
 
-def base64_decode(s):
-    """轻量级base64解码（Micropython兼容）"""
-    # 关键修复：将str类型转换为bytes类型
-    # if isinstance(s, str):
-    #    s = s.encode('utf-8')
-    # s = s.rstrip(b'=')
-    res = bytearray()
+    # 关键2：补全padding（你的逻辑保留，仅加了上面的清理步骤）
+    str_len = len(base64_str)
+    remainder = str_len % 4
+    pad_num = (4 - remainder) % 4
+    new_str = base64_str + pad_num * '='
 
-    for i in range(0, len(s), 4):
-        chunk = s[i:i + 4]
-        while len(chunk) < 4:
-            chunk += '='
-        # 核心修复：直接用字节值c（int）查找，无需转字符串
-        # bytes.find() 接受 int 类型的参数（对应ASCII码）
-        chunk_len = len(chunk)
-        try:
-            idx = []
-            for c in chunk:
-                item = _b64chars.find(c)
-                idx.append(item)
-            # idx = [_b64chars.find(c) for c in chunk]
-        except:
-            print("不出")
-            print(c)
+    # 原有解码逻辑
+    base64_bytes = new_str.encode("utf-8")
+    audio_bytes = binascii.a2b_base64(base64_bytes)
 
-        # 处理无效Base64字符（find返回-1的情况）
-        if -1 in idx:
-            continue
-        combined = (idx[0] << 18) | (idx[1] << 12) | (idx[2] << 6) | idx[3]
-        # res.extend(struct.pack('<I', b)[:3])
-        # 根据chunk长度提取有效字节（修复截断问题）
-        # 4个字符 -> 3字节, 3个字符 -> 2字节, 2个字符 -> 1字节
-        if chunk_len == 4:
-            res.append((combined >> 16) & 0xFF)
-            res.append((combined >> 8) & 0xFF)
-            res.append(combined & 0xFF)
-        elif chunk_len == 3:
-            res.append((combined >> 16) & 0xFF)
-            res.append((combined >> 8) & 0xFF)
-        elif chunk_len == 2:
-            res.append((combined >> 16) & 0xFF)
-
-    return bytes(res)
+    return audio_bytes
 
 
 # ===================== I2S音频初始化 =====================
 def init_audio():
-    """初始化MAX98375功放和I2S（参考test_speaker.py）"""
-    amp_pin = Pin(AMP_ENABLE_PIN, Pin.OUT)
-    amp_pin.value(1)  # 启用功放
+    # 1. 硬件初始化（优化缓冲区+明确配置）
+    Pin(21, Pin.OUT).value(1)  # 启用功放
+    # 关键优化：ibuf大小设置为采样率的1/2（24000/2=12000），匹配16位数据特性
     i2s = I2S(
         0,
-        sck=Pin(I2S_SCK_PIN),
-        ws=Pin(I2S_WS_PIN),
-        sd=Pin(I2S_SD_PIN),
+        sck=Pin(9),
+        ws=Pin(10),
+        sd=Pin(8),
         mode=I2S.TX,
-        bits=BITS,
-        format=I2S.MONO,
-        rate=SAMPLE_RATE,
-        ibuf=24000  # 与test_speaker.py保持一致
+        bits=16,  # 匹配PCM：16位
+        format=I2S.MONO,  # 匹配PCM：单声道
+        rate=24000,  # 匹配PCM：24000Hz采样率
+        ibuf=24000  # 优化缓冲区大小（16位数据建议采样率/2）
     )
-    print("[AUDIO] 音频硬件初始化完成")
-    return i2s, amp_pin
-
-
-def deinit_audio(i2s, amp_pin):
-    """清理音频硬件资源"""
-    i2s.write(b'\x00\x00' * 100)  # 清空缓冲区
-    time.sleep(0.1)
-    amp_pin.value(0)
-    i2s.deinit()
-    print("[AUDIO] 音频硬件已关闭")
+    return i2s
 
 
 # ===================== WiFi连接 =====================
@@ -139,40 +101,68 @@ def connect_wifi():
     return False
 
 
-def extract_base64(row_data):
+def extract_base64(stream_data, flag):
+    start = '"data":"'
+    end = '"'
     base64 = ''
-    if 'data":"' in row_data:
-        row_data = row_data.split('data":"')[-1]
-    if "expires_at" in row_data:
-        base64 = row_data.split('","expires')[0]
-    else:
-        base64 = row_data
-    return base64
+    while start in stream_data:
+        if flag == 0:
+            ans = stream_data.find(start)
+            if ans != -1:
+                start_idx = ans + len(start)
+                stream_data = stream_data[start_idx:]
+                flag = 1
+            else:
+                return base64
+
+        if flag == 1:
+            ans = stream_data.find(end)
+            if ans != -1:
+                end_idx = ans
+                base64, stream_data = base64 + stream_data[:end_idx], stream_data[end_idx:]
+                flag = 0
+            else:
+                base64 += stream_data
+
+    return base64, flag
+
+
+def test_speaker(i2s):
+    buf_size = 4096
+    buf = bytearray(buf_size)
+
+    with open("tts_raw.pcm", "rb") as f:
+        while True:
+            # 读取数据（确保每次读取完整的样本数）
+            num_read = f.readinto(buf)
+            # 关键2：处理最后一段不完整的数据（必须是2字节的倍数）
+            if num_read == 0:
+                break  # 播放完毕
+
+            written = 0
+            while written < num_read:
+                written += i2s.write(buf[written:num_read])
 
 
 # ===================== TTS API请求（带实时播放） =====================
 def tts_api_request(text):
     """
     核心函数：请求TTS API并实时播放音频
-    返回: (success: bool, total_audio_chunks: int, validation_results: list)
     """
     # 1. WiFi连接检查
     if not connect_wifi():
         return False, 0, []
 
     # 2. 初始化音频
-    i2s, amp_pin = init_audio()
-    buf_size = 4096  # 与test_speaker.py缓冲区大小一致
-    play_buf = bytearray(buf_size)
-    sock = None
-    audio_chunks = 0
-    validation_results = []
-    response_received = False
+    i2s = init_audio()
+    # test_speaker(i2s)
 
     # 2. 建立SSL连接
     print(f"[API] 连接TTS API: {API_HOST}:{API_PORT}")
     addr_info = socket.getaddrinfo(API_HOST, API_PORT)[0]
     sock = socket.socket(addr_info[0], addr_info[1], addr_info[2])
+    sock.setsockopt(1, 8, RECV_BUFFER_SIZE)  # 8KB
+
     sock.settimeout(15)
     sock.connect(addr_info[-1])
 
@@ -208,55 +198,21 @@ def tts_api_request(text):
     sock.write(payload_bytes)
     print(f"[API] TTS请求已发送，文本: {text}")
 
-    cnt = 0
-    x = []
+    flag = 0
     while True:
-        chunk = sock.read(1024)
-        print(f'第{cnt}次\n')
-        cnt += 1
+        chunk = sock.read(RECV_BUFFER_SIZE)
+
         if not chunk:
             break
-        row_data = chunk.decode('utf-8', 'ignore')
-        base64 = extract_base64(row_data)
-        # x.append(base64)
-        # filename = f"temp.txt"
-        # with open(filename, "w") as f:
-        #     for i, text in enumerate(x):
-        #         f.write(f"\n第{i}次")
-        #         f.write(text)
+        row_data = chunk.decode('utf-8').replace("\n", '')
 
-        # 跳过过短的数据（不完整的数据）
-        if len(base64) < 50:
-            continue
+        base64, flag = extract_base64(row_data, flag)
 
         audio_bytes = base64_decode(base64)
-        print(f"[AUDIO] 解码音频数据，大小: {len(audio_bytes)} 字节")
-
-        # I2S播放（参考test_speaker.py的播放逻辑）
-        offset = 0
-        while offset < len(audio_bytes):
-            chunk_len = min(buf_size, len(audio_bytes) - offset)
-            # 确保是偶数长度（16位=2字节/样本）
-            if chunk_len % 2 != 0:
-                chunk_len -= 1
-            if chunk_len <= 0:
-                break
-
-            play_buf[:chunk_len] = audio_bytes[offset:offset + chunk_len]
-            written = 0
-            while written < chunk_len:
-                written += i2s.write(play_buf, chunk_len)
-            offset += chunk_len
-        audio_chunks += 1  # 修复：增加音频块计数
-        print(f"[AUDIO] 播放完成音频块 #{audio_chunks}")
-
-    # 修复：关闭音频资源
-    deinit_audio(i2s, amp_pin)
-    # 修复：关闭socket连接
-    if sock:
-        sock.close()
-
-    return True, audio_chunks
+        num_read = len(audio_bytes)
+        written = 0
+        while written < num_read:
+            written += i2s.write(audio_bytes[written:num_read])
 
 
 # ===================== 主程序 =====================
@@ -266,11 +222,14 @@ def main():
     print("ESP32 TTS 流式播放程序")
     print("=" * 50)
 
-    success, audio_chunks = tts_api_request(TEXT)
-
-    if success:
-        print("\n[结果] API请求成功完成，共播放 {} 个音频块".format(audio_chunks))
+    tts_api_request(TEXT)
 
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
