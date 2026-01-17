@@ -150,7 +150,7 @@ class TTSService:
 
 def main():
     """主程序入口"""
-    text = "西方说的龙国债务陷阱，基本上是这样一个模式"
+    text = "你好作者你好啊，现在是tts测试"
     api_key = 'sk-943f95da67d04893b70c02be400e2935'
 
     tts_service = TTSService(api_key=api_key)
