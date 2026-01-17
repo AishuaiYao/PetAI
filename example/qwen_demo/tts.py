@@ -85,7 +85,7 @@ print(f"总采样点数: {total_samples} 个")
 print(f"总时长: {total_duration:.2f} 秒")
 
 # 保存纯裸PCM文件（无WAV头，后缀名.pcm）
-with open("tts_raw.pcm", "wb") as f:  # 修正文件名后缀
+with open("../../data/tts_raw.pcm", "wb") as f:  # 修正文件名后缀
     f.write(all_audio_pcm)
 print(f"\n纯裸PCM文件已生成：tts_raw.pcm（{sample_bits}位单声道24000Hz）")
 
