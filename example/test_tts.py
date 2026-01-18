@@ -12,7 +12,7 @@ from machine import I2S, Pin
 WIFI_SSID = "CMCC-huahua"
 WIFI_PASSWORD = "*HUAHUAshi1zhimao"
 API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
-TEXT = "你好作者你好啊，现在是tts测试"
+TEXT = "花花，花花，你听的到吗"
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
 RECV_BUFFER_SIZE = 65536
@@ -26,7 +26,6 @@ API_HOST = "dashscope.aliyuncs.com"
 API_PORT = 443
 API_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
 
-# I2S音频硬件配置（参考test_speaker.py）
 I2S_SCK_PIN = 9
 I2S_WS_PIN = 10
 I2S_SD_PIN = 8
@@ -85,47 +84,34 @@ def connect_wifi():
     return False
 
 
-def extract_base64(stream_data, flag):
-    start = '"data":"'
-    end = '"'
-    base64 = ''
-    while start in stream_data:
-        if flag == 0:
-            ans = stream_data.find(start)
-            if ans != -1:
-                start_idx = ans + len(start)
-                stream_data = stream_data[start_idx:]
-                flag = 1
-            else:
-                return base64
+def parse_sse_line(line_str):
+    """解析SSE数据行"""
+    if not line_str.startswith('data:'):
+        return None
 
-        if flag == 1:
-            ans = stream_data.find(end)
-            if ans != -1:
-                end_idx = ans
-                base64, stream_data = base64 + stream_data[:end_idx], stream_data[end_idx:]
-                flag = 0
-            else:
-                base64 += stream_data
+    json_str = line_str[5:]
+    if json_str == '[DONE]':
+        return {"type": "done"}
 
-    return base64, flag
+    try:
+        return {"type": "data", "data": json.loads(json_str)}
+    except:
+        return None
 
+def handle_chunk_data(chunk):
+    """处理数据块，返回(audio_data, is_done)"""
+    if "output" not in chunk:
+        return None, False
 
-def test_speaker(i2s):
-    buf_size = 4096
-    buf = bytearray(buf_size)
+    if chunk["output"].get("finish_reason") == "stop":
+        return None, True
 
-    with open("tts_raw.pcm", "rb") as f:
-        while True:
-            # 读取数据（确保每次读取完整的样本数）
-            num_read = f.readinto(buf)
-            # 关键2：处理最后一段不完整的数据（必须是2字节的倍数）
-            if num_read == 0:
-                break  # 播放完毕
+    audio_info = chunk["output"].get("audio", {})
+    if "data" in audio_info:
+        return audio_info["data"], False
 
-            written = 0
-            while written < num_read:
-                written += i2s.write(buf[written:num_read])
+    return None, False
+
 
 
 # ===================== TTS API请求（带实时播放） =====================
@@ -139,7 +125,6 @@ def tts_api_request(text):
 
     # 2. 初始化音频
     i2s = init_audio()
-    # test_speaker(i2s)
 
     # 2. 建立SSL连接
     print(f"[API] 连接TTS API: {API_HOST}:{API_PORT}")
@@ -182,24 +167,52 @@ def tts_api_request(text):
     sock.write(payload_bytes)
     print(f"[API] TTS请求已发送，文本: {text}")
 
-    flag = 0
-    cnt = 0
-    while True:
-        cnt += 1
-        chunk = sock.read(RECV_BUFFER_SIZE)
+    stream_data = {}
+    count = 0
+    buffer = ""
 
+    while True:
+        chunk = sock.read(RECV_BUFFER_SIZE)
         if not chunk:
             break
-        row_data = chunk.decode('utf-8').replace("\n", '')
-        if cnt == 1:
-            print(row_data)
 
-        base64, flag = extract_base64(row_data, flag)
+        buffer += chunk.decode('utf-8')
 
-        if flag:
-            audio_bytes = ubinascii.a2b_base64(base64)
+        while '\n' in buffer:
+            line, buffer = buffer.split('\n', 1)
+            line = line.strip()
 
-            i2s.write(audio_bytes)
+            if not line:
+                continue
+
+            parsed = parse_sse_line(line)
+            if parsed is None:
+                continue
+
+            count += 1
+            stream_data[count] = {"line": line, "parsed": parsed}
+
+            if parsed["type"] == "done":
+                break
+
+            audio_data, is_done = handle_chunk_data(parsed["data"])
+            if audio_data:
+                audio_bytes = ubinascii.a2b_base64(audio_data)
+                i2s.write(audio_bytes)
+                print(f"✓ 播放块{count}, 大小: {len(audio_bytes)}")
+
+            if is_done:
+                break
+
+    print(f"共获取 {count} 条数据")
+
+    # 保存数据
+    try:
+        with open("tts_stream_data.json", 'w') as f:
+            json.dump(stream_data, f)
+        print("数据已保存到 tts_stream_data.json")
+    except:
+        pass
 
 
 # ===================== 主程序 =====================

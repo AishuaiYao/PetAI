@@ -23,6 +23,7 @@ def play_from_txt(txt_path):
             base64_str = line.strip()
             if base64_str:
                 audio_bytes = ubinascii.a2b_base64(base64_str)
+
                 i2s.write(audio_bytes)
 
     print("播放完成！")
