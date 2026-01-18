@@ -11,8 +11,9 @@ API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
 COLLECT_SECONDS = 5
 SAMPLE_RATE = 16000
 RECV_BUFFER_SIZE = 8192
-VAD_THRESHOLD = 1000
+VAD_THRESHOLD = 500
 SILENCE_FRAMES = 20
+VOICE_FRAMES = 20
 
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
@@ -68,8 +69,6 @@ def detect_voice_in_chunk(chunk):
         sum_squares += sample_16 * sample_16
 
     rms = (sum_squares / sample_count) ** 0.5
-    if rms > VAD_THRESHOLD:
-        print(rms)
     return rms > VAD_THRESHOLD
 
 
@@ -79,33 +78,42 @@ def collect_audio(mic):
     chunk_size = 3200
     collected = bytearray()
     silence_count = 0
+    voice_buffer = []
+    voice_count = 0
     recording = False
 
-    try:
-        while True:
-            chunk = bytearray(chunk_size)
-            mic.readinto(chunk)
+    while True:
+        chunk = bytearray(chunk_size)
+        mic.readinto(chunk)
 
-            has_voice = detect_voice_in_chunk(chunk)
+        has_voice = detect_voice_in_chunk(chunk)
 
-            if not recording:
-                if has_voice:
-                    print("[ASR] 检测到说话，开始录音...")
-                    recording = True
-                    collected += chunk
+        if not recording:
+            voice_buffer.append(chunk)
+            if has_voice:
+                voice_count += 1
             else:
-                collected += chunk
-                if not has_voice:
-                    silence_count += 1
-                    if silence_count >= SILENCE_FRAMES:
-                        print("[ASR] 检测到静音，录音结束")
-                        break
-                else:
-                    silence_count = 0
+                voice_count = 0
+                voice_buffer = []
 
-    finally:
-        print(f"[ASR] 采集完成: {len(collected)}字节")
-        return collected
+            if voice_count >= VOICE_FRAMES:
+                print("[ASR] 检测到说话，开始录音...")
+                recording = True
+                collected = bytearray()
+                for buf in voice_buffer:
+                    collected += buf
+        else:
+            collected += chunk
+            if not has_voice:
+                silence_count += 1
+                if silence_count >= SILENCE_FRAMES:
+                    print("[ASR] 检测到静音，录音结束")
+                    break
+            else:
+                silence_count = 0
+
+    print(f"[ASR] 采集完成: {len(collected)}字节")
+    return collected
 
 
 def create_wav(audio_data):
@@ -265,23 +273,22 @@ def main():
     # 初始化麦克风（只初始化一次）
     mic = init_microphone()
 
-    try:
-        while True:
-            print("\n--- 新一轮对话 ---")
-            raw_audio = collect_audio(mic)
-            wav_data = create_wav(raw_audio)
-            user_text = asr_api_call(wav_data)
+    while True:
+        print("\n--- 新一轮对话 ---")
+        raw_audio = collect_audio(mic)
+        wav_data = create_wav(raw_audio)
+        user_text = asr_api_call(wav_data)
 
-            if user_text:
-                ai_text = qwen_api_call(user_text)
-                if ai_text:
-                    tts_api_call(ai_text)
+        if user_text:
+            ai_text = qwen_api_call(user_text)
+            if ai_text:
+                tts_api_call(ai_text)
 
-            time.sleep(1)
-    finally:
-        # 程序退出时关闭麦克风
-        mic.deinit()
-        print("[Mic] 麦克风已关闭")
+        time.sleep(1)
+
+    # 程序退出时关闭麦克风
+    mic.deinit()
+    print("[Mic] 麦克风已关闭")
 
 
 if __name__ == "__main__":
