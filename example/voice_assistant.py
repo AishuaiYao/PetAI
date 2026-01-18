@@ -11,8 +11,8 @@ API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
 COLLECT_SECONDS = 5
 SAMPLE_RATE = 16000
 RECV_BUFFER_SIZE = 8192
-VAD_THRESHOLD = 3000
-SILENCE_FRAMES = 200
+VAD_THRESHOLD = 1000
+SILENCE_FRAMES = 20
 
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
@@ -46,7 +46,7 @@ def init_microphone():
 
     # 丢弃初始化噪音 - 100ms
     chunk_size = 3200
-    discard_chunks = int(16000 * 0.1 / (chunk_size / 4))
+    discard_chunks = int(16000 * 2 / (chunk_size / 4))
     print(f"[Mic] 丢弃初始化噪音: {discard_chunks}个chunk")
     for _ in range(discard_chunks):
         chunk = bytearray(chunk_size)
@@ -68,7 +68,8 @@ def detect_voice_in_chunk(chunk):
         sum_squares += sample_16 * sample_16
 
     rms = (sum_squares / sample_count) ** 0.5
-    print(rms)
+    if rms > VAD_THRESHOLD:
+        print(rms)
     return rms > VAD_THRESHOLD
 
 
@@ -94,7 +95,6 @@ def collect_audio(mic):
                     collected += chunk
             else:
                 collected += chunk
-
                 if not has_voice:
                     silence_count += 1
                     if silence_count >= SILENCE_FRAMES:
@@ -154,7 +154,7 @@ def asr_api_call(wav_data):
 
 def qwen_api_call(text):
     print("[Qwen] 调用API...")
-    payload_dict = {"model": "qwen-plus", "messages": [{"role": "system", "content": "You are a helpful assistant."},
+    payload_dict = {"model": "qwen-plus", "messages": [{"role": "system", "content": "你是一个ai陪伴机器人，你的名字叫花花，请你和用户对话，每次对话返回的字数不必太多，20字左右就行"},
                                                        {"role": "user", "content": text}]}
     payload_bytes = json.dumps(payload_dict).encode('utf-8')
 
