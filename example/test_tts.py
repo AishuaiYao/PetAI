@@ -3,7 +3,7 @@ import json
 import struct
 import time
 import network
-import binascii  # 必须导入这个模块
+import ubinascii
 
 from machine import I2S, Pin
 
@@ -36,22 +36,6 @@ BITS = 16
 CHANNELS = 1
 
 
-def base64_decode(base64_str):
-    # 关键1：先清理无效字符（只保留Base64允许的字符）
-    valid_chars = set('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=')
-    base64_str = ''.join([c for c in base64_str if c in valid_chars])
-
-    # 关键2：补全padding（你的逻辑保留，仅加了上面的清理步骤）
-    str_len = len(base64_str)
-    remainder = str_len % 4
-    pad_num = (4 - remainder) % 4
-    new_str = base64_str + pad_num * '='
-
-    # 原有解码逻辑
-    base64_bytes = new_str.encode("utf-8")
-    audio_bytes = binascii.a2b_base64(base64_bytes)
-
-    return audio_bytes
 
 
 # ===================== I2S音频初始化 =====================
@@ -199,20 +183,23 @@ def tts_api_request(text):
     print(f"[API] TTS请求已发送，文本: {text}")
 
     flag = 0
+    cnt = 0
     while True:
+        cnt += 1
         chunk = sock.read(RECV_BUFFER_SIZE)
 
         if not chunk:
             break
         row_data = chunk.decode('utf-8').replace("\n", '')
+        if cnt == 1:
+            print(row_data)
 
         base64, flag = extract_base64(row_data, flag)
 
-        audio_bytes = base64_decode(base64)
-        num_read = len(audio_bytes)
-        written = 0
-        while written < num_read:
-            written += i2s.write(audio_bytes[written:num_read])
+        if flag:
+            audio_bytes = ubinascii.a2b_base64(base64)
+
+            i2s.write(audio_bytes)
 
 
 # ===================== 主程序 =====================
