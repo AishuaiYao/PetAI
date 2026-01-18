@@ -11,6 +11,8 @@ API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
 COLLECT_SECONDS = 5
 SAMPLE_RATE = 16000
 RECV_BUFFER_SIZE = 8192
+VAD_THRESHOLD = 3000
+SILENCE_FRAMES = 20
 
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
@@ -33,24 +35,60 @@ def connect_wifi():
     print("[WiFi] 连接失败")
     return False
 
+def detect_voice_in_chunk(chunk):
+    """检测chunk是否有语音"""
+    import struct
+    sample_count = len(chunk) // 4
+    sum_squares = 0
+    
+    for i in range(sample_count):
+        sample = struct.unpack('<i', chunk[i*4:(i+1)*4])[0]
+        sum_squares += sample * sample
+    
+    rms = (sum_squares / sample_count) ** 0.5
+    return rms > VAD_THRESHOLD
+
 def collect_audio():
-    print(f"[ASR] 采集{COLLECT_SECONDS}秒音频...")
+    print("[ASR] 等待用户说话...")
     mic = I2S(0, sck=Pin(12), ws=Pin(13), sd=Pin(14),
               mode=I2S.RX, bits=32, format=I2S.MONO,
               rate=SAMPLE_RATE, ibuf=40000)
     
-    total_bytes = COLLECT_SECONDS * SAMPLE_RATE * 4
     chunk_size = 3200
-    collected = bytearray()
+    chunks = []
+    silence_count = 0
+    recording = False
     
-    while len(collected) < total_bytes:
-        chunk = bytearray(chunk_size)
-        mic.readinto(chunk)
-        collected.extend(chunk)
+    try:
+        while True:
+            chunk = bytearray(chunk_size)
+            mic.readinto(chunk)
+            
+            has_voice = detect_voice_in_chunk(chunk)
+            
+            if not recording:
+                if has_voice:
+                    print("[ASR] 检测到说话，开始录音...")
+                    recording = True
+                    chunks.append(chunk)
+            else:
+                chunks.extend(chunk)
+                
+                if not has_voice:
+                    silence_count += 1
+                    if silence_count >= SILENCE_FRAMES:
+                        print("[ASR] 检测到静音，录音结束")
+                        break
+                else:
+                    silence_count = 0
     
-    mic.deinit()
-    print(f"[ASR] 采集完成: {len(collected)}字节")
-    return collected
+    finally:
+        mic.deinit()
+        collected = bytearray()
+        for c in chunks:
+            collected.extend(c)
+        print(f"[ASR] 采集完成: {len(collected)}字节")
+        return collected
 
 def create_wav(audio_data):
     datasize = len(audio_data)
