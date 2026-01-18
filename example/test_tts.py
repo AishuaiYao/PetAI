@@ -15,7 +15,7 @@ API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
 TEXT = "花花，花花，你听的到吗"
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
-RECV_BUFFER_SIZE = 65536
+RECV_BUFFER_SIZE = 8192
 
 # 调试配置
 DEBUG_SAVE_SSE = True  # 是否保存SSE数据到文件
