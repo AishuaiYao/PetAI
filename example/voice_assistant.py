@@ -219,7 +219,7 @@ def handle_chunk_data(chunk):
 def tts_api_call(text):
     print(f"[TTS] 播放: {text}")
     Pin(21, Pin.OUT).value(1)
-    i2s = I2S(0, sck=Pin(9), ws=Pin(10), sd=Pin(8), mode=I2S.TX, bits=16, format=I2S.MONO, rate=24000, ibuf=24000)
+    i2s = I2S(1, sck=Pin(9), ws=Pin(10), sd=Pin(8), mode=I2S.TX, bits=16, format=I2S.MONO, rate=24000, ibuf=24000)
 
     payload_dict = {"model": "qwen3-tts-flash", "input": {"text": text},
                     "parameters": {"voice": VOICE, "language_type": LANGUAGE}}
@@ -270,11 +270,12 @@ def main():
     if not connect_wifi():
         return
 
-    # 初始化麦克风（只初始化一次）
+    # 初始化麦克风（只初始化一次，使用I2S(0)）
     mic = init_microphone()
 
     while True:
         print("\n--- 新一轮对话 ---")
+
         raw_audio = collect_audio(mic)
         wav_data = create_wav(raw_audio)
         user_text = asr_api_call(wav_data)
