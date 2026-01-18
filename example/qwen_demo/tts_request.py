@@ -4,6 +4,7 @@ import pyaudio
 import time
 import base64
 import numpy as np
+import os
 from typing import Optional, Dict, Any
 
 
@@ -13,6 +14,7 @@ class TTSService:
         self.api_key = api_key
         self.voice = voice
         self.language = language
+        self.stream_data = {}
 
         # 音频播放初始化
         self.p = pyaudio.PyAudio()
@@ -42,11 +44,15 @@ class TTSService:
             }
         }
 
-    def _process_audio_chunk(self, audio_data: str) -> None:
+    def _process_audio_chunk(self, audio_data: str, count: int) -> None:
         """处理并播放音频数据块"""
         wav_bytes = base64.b64decode(audio_data)
         audio_np = np.frombuffer(wav_bytes, dtype=np.int16)
-        self.stream.write(audio_np.tobytes())
+        audio_bytes = audio_np.tobytes()
+        self.stream.write(audio_bytes)
+
+        self.stream_data[count]["audio_data"] = audio_data
+
         print(f"✓ 播放音频块，大小: {len(audio_np)} samples")
 
     def _parse_sse_line(self, line_str: str) -> Optional[Dict[str, Any]]:
@@ -65,7 +71,7 @@ class TTSService:
             print(f"JSON解析错误，数据: {json_str[:200]}...")
             return None
 
-    def _handle_chunk_data(self, chunk: Dict[str, Any]) -> bool:
+    def _handle_chunk_data(self, chunk: Dict[str, Any], count: int) -> bool:
         """处理数据块，返回是否继续处理"""
         if "output" not in chunk:
             return True
@@ -78,7 +84,7 @@ class TTSService:
         # 处理音频数据
         audio_info = chunk["output"].get("audio", {})
         if "data" in audio_info:
-            self._process_audio_chunk(audio_info["data"])
+            self._process_audio_chunk(audio_info["data"], count)
 
         return True
 
@@ -123,21 +129,40 @@ class TTSService:
 
     def _process_stream_response(self, response: requests.Response) -> bool:
         """处理流式响应"""
+        self.stream_data = {}
+        count = 0
+        
         for line in response.iter_lines():
             if not line:
                 continue
 
-            parsed = self._parse_sse_line(line.decode('utf-8'))
+            line_str = line.decode('utf-8')
+            parsed = self._parse_sse_line(line_str)
             if parsed is None:
                 continue
+
+            count += 1
+            self.stream_data[count] = {
+                "line": line_str,
+                "parsed": parsed
+            }
 
             if parsed["type"] == "done":
                 break
 
-            if not self._handle_chunk_data(parsed["data"]):
+            if not self._handle_chunk_data(parsed["data"], count):
                 break
 
+        print(f"共获取 {count} 条数据")
         return True
+
+    def _save_stream_data(self) -> None:
+        """保存流数据到本地"""
+        filepath = "../../data/tts_stream_data.json"
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(self.stream_data, f, ensure_ascii=False, indent=2)
+        print(f"数据已保存到 {filepath}")
 
     def cleanup(self) -> None:
         """清理资源"""
@@ -145,6 +170,8 @@ class TTSService:
         self.stream.stop_stream()
         self.stream.close()
         self.p.terminate()
+        
+        self._save_stream_data()
         print("音频播放完成，资源已清理")
 
 
