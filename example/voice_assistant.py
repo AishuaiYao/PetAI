@@ -12,7 +12,7 @@ COLLECT_SECONDS = 5
 SAMPLE_RATE = 16000
 RECV_BUFFER_SIZE = 8192
 VAD_THRESHOLD = 3000
-SILENCE_FRAMES = 20
+SILENCE_FRAMES = 200
 
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
@@ -36,16 +36,18 @@ def connect_wifi():
     return False
 
 def detect_voice_in_chunk(chunk):
-    """检测chunk是否有语音"""
+    """检测chunk是否有语音（32位转16位）"""
     import struct
     sample_count = len(chunk) // 4
     sum_squares = 0
     
     for i in range(sample_count):
-        sample = struct.unpack('<i', chunk[i*4:(i+1)*4])[0]
-        sum_squares += sample * sample
+        sample_32 = struct.unpack('<i', chunk[i*4:(i+1)*4])[0]
+        sample_16 = sample_32 >> 16
+        sum_squares += sample_16 * sample_16
     
     rms = (sum_squares / sample_count) ** 0.5
+    print(rms)
     return rms > VAD_THRESHOLD
 
 def collect_audio():
@@ -55,7 +57,7 @@ def collect_audio():
               rate=SAMPLE_RATE, ibuf=40000)
     
     chunk_size = 3200
-    chunks = []
+    collected = bytearray()
     silence_count = 0
     recording = False
     
@@ -70,9 +72,9 @@ def collect_audio():
                 if has_voice:
                     print("[ASR] 检测到说话，开始录音...")
                     recording = True
-                    chunks.append(chunk)
+                    collected += chunk
             else:
-                chunks.extend(chunk)
+                collected += chunk
                 
                 if not has_voice:
                     silence_count += 1
@@ -84,9 +86,6 @@ def collect_audio():
     
     finally:
         mic.deinit()
-        collected = bytearray()
-        for c in chunks:
-            collected.extend(c)
         print(f"[ASR] 采集完成: {len(collected)}字节")
         return collected
 
