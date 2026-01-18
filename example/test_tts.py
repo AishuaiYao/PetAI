@@ -167,7 +167,6 @@ def tts_api_request(text):
     sock.write(payload_bytes)
     print(f"[API] TTS请求已发送，文本: {text}")
 
-    stream_data = {}
     count = 0
     buffer = ""
 
@@ -190,7 +189,6 @@ def tts_api_request(text):
                 continue
 
             count += 1
-            stream_data[count] = {"line": line, "parsed": parsed}
 
             if parsed["type"] == "done":
                 break
@@ -205,14 +203,6 @@ def tts_api_request(text):
                 break
 
     print(f"共获取 {count} 条数据")
-
-    # 保存数据
-    try:
-        with open("tts_stream_data.json", 'w') as f:
-            json.dump(stream_data, f)
-        print("数据已保存到 tts_stream_data.json")
-    except:
-        pass
 
 
 # ===================== 主程序 =====================
