@@ -10,10 +10,71 @@ ESP32 TTS 流式播放程序
 [API] 连接TTS API: dashscope.aliyuncs.com:443
 Warning: lwip.setsockopt() option not implemented
 [API] SSL连接建立成功
-[API] TTS请求已发送，文本: 测试测试，你听的到吗
+[API] TTS请求已发送，文本: 我是电子花花，你听的到吗
+✓ 播放块1, 大小: 15360
+✓ 播放块2, 大小: 15360
+✓ 播放块3, 大小: 15360
+✓ 播放块4, 大小: 15360
+✓ 播放块5, 大小: 3840
+共获取 7 条数据
+>>>
+
+
+
+
+>>> %Run -c $EDITOR_CONTENT
+
+MPY: soft reboot
+
+==================================================
+ESP32 TTS 流式播放程序
+==================================================
+[WiFi] 已连接WiFi，跳过重连
+[WiFi] IP地址: 192.168.1.15
+[API] 连接TTS API: dashscope.aliyuncs.com:443
+Warning: lwip.setsockopt() option not implemented
+[API] SSL连接建立成功
+[API] TTS请求已发送，文本: 我是电子花花，你听的到吗
 ✓ 播放块1, 大小: 15360
 ✓ 播放块2, 大小: 15360
 ✓ 播放块3, 大小: 15360
 ✓ 播放块4, 大小: 15360
 共获取 6 条数据
 >>>
+
+
+
+
+>>> %Run -c $EDITOR_CONTENT
+
+MPY: soft reboot
+
+==================================================
+ESP32 TTS 流式播放程序
+==================================================
+[WiFi] 已连接WiFi，跳过重连
+[WiFi] IP地址: 192.168.1.15
+[API] 连接TTS API: dashscope.aliyuncs.com:443
+Warning: lwip.setsockopt() option not implemented
+[API] SSL连接建立成功
+[API] TTS请求已发送，文本: 我是电子花花，你听的到吗
+✓ 播放块1, 大小: 15360
+✓ 播放块2, 大小: 15360
+✓ 播放块3, 大小: 15360
+✓ 播放块4, 大小: 15360
+✓ 播放块5, 大小: 15360
+✓ 播放块6, 大小: 15360
+✓ 播放块7, 大小: 7680
+共获取 9 条数据
+>>>
+
+
+
+
+
+
+
+
+
+
+
