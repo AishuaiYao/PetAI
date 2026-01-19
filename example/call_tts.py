@@ -12,7 +12,7 @@ from machine import I2S, Pin
 WIFI_SSID = "CMCC-huahua"
 WIFI_PASSWORD = "*HUAHUAshi1zhimao"
 API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
-TEXT = "花花，花花，你听的到吗"
+TEXT = "我是电子花花，你听的到吗"
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
 RECV_BUFFER_SIZE = 8192
