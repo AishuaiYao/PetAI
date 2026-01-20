@@ -13,6 +13,7 @@ WIFI_SSID = "CMCC-huahua"
 WIFI_PASSWORD = "*HUAHUAshi1zhimao"
 API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
 TEXT = "我是电子花花，你听的到吗"
+TEXT = "中国国家统计局1月19日发布了2025年全国GDP初步数据。数据显示，2025年，按照可比价格计算，中国大陆实际GDP同比增长5.0%，人均实际GDP同比增长5.1%。2025年的中国经济数据，呈现出一幅令人五味杂陈的复杂图景：名义GDP总量历史性地站上140万亿元的台阶，人均GDP触摸到1.4万美元的门槛，这是国力持续积累的明证；然而，另一组数字却投下了长达一个世纪的阴影——全年仅792万新生儿呱呱坠地，年末总人口较上年锐减339万。"
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
 RECV_BUFFER_SIZE = 8192
@@ -43,7 +44,7 @@ def init_audio():
         bits=16,
         format=I2S.MONO,
         rate=24000,
-        ibuf=24000
+        ibuf=48000
     )
     return i2s
 
@@ -88,23 +89,125 @@ def parse_sse_line(line_str):
         return None
 
 
-def handle_chunk_data(chunk):
+def handle_chunk_data(chunk, i2s, count):
+    """处理单个音频块并实时播放"""
     if "output" not in chunk:
-        return None, False
+        return count, False
 
     if chunk["output"].get("finish_reason") == "stop":
-        return None, True
+        return count, True
 
     audio_info = chunk["output"].get("audio", {})
     if "data" in audio_info:
-        return audio_info["data"], False
+        # 解码Base64音频数据并立即播放
+        audio_bytes = ubinascii.a2b_base64(audio_info["data"])
+        i2s.write(audio_bytes)
+        count += 1
+        print(f"✓ 播放块{count}, 大小: {len(audio_bytes)}")
 
-    return None, False
+    return count, False
 
 
+def stream_chunked_data(sock, i2s):
+    """流式处理chunked数据：边接收、边解析、边播放"""
+    # 用于缓存未解析完成的SSE行
+    sse_buffer = ""
+    count = 0
+    is_done = False
+
+    print("[HTTP] 开始流式处理chunked数据...")
+
+    while not is_done:
+        # 1. 读取chunk大小行
+        size_line = b""
+        while b'\r\n' not in size_line:
+            chunk = sock.read(1)
+            if not chunk:
+                print("[HTTP] 连接中断，结束流式处理")
+                return count
+            size_line += chunk
+
+        # 2. 解析chunk大小（十六进制）
+        chunk_size_str = size_line.split(b'\r\n')[0].strip()
+        if not chunk_size_str:
+            continue
+
+        try:
+            chunk_size = int(chunk_size_str, 16)
+        except:
+            print(f"[HTTP] chunk大小解析失败: {chunk_size_str}")
+            continue
+
+        # 3. chunk大小为0表示结束
+        if chunk_size == 0:
+            print("[HTTP] 收到结束chunk (size=0)")
+            break
+
+        # 4. 读取指定大小的数据（流式读取）
+        received = 0
+        chunk_data = b""
+        while received < chunk_size:
+            to_read = min(4096, chunk_size - received)
+            data = sock.read(to_read)
+            if not data:
+                break
+            chunk_data += data
+            received += len(data)
+
+        print(f"[HTTP] 接收chunk: 大小={chunk_size}, 实际={len(chunk_data)}")
+
+        # 5. 将当前chunk数据转换为字符串并拼接到SSE缓冲区
+        sse_buffer += chunk_data.decode('utf-8', 'ignore')
+
+        # 6. 解析SSE缓冲区中的完整行（核心流式解析逻辑）
+        # 按换行符分割，只处理完整的行，不完整的留在缓冲区
+        lines = sse_buffer.split('\n')
+        # 最后一行可能不完整，放回缓冲区
+        sse_buffer = lines[-1] if lines else ""
+
+        # 处理所有完整的行
+        for line in lines[:-1]:
+            line = line.strip()
+            if not line:
+                continue
+
+            # 解析SSE行
+            parsed_line = parse_sse_line(line)
+            if not parsed_line:
+                continue
+
+            if parsed_line["type"] == "done":
+                print("[SSE] 收到[DONE]信号")
+                is_done = True
+                break
+
+            if parsed_line["type"] == "data":
+                count, is_done = handle_chunk_data(parsed_line["data"], i2s, count)
+                if is_done:
+                    print("[SSE] 收到完成信号")
+                    break
+
+        # 7. 读取chunk结尾的\r\n
+        sock.read(2)  # 读取\r\n
+
+        # 如果已完成，退出循环
+        if is_done:
+            break
+
+    # 处理缓冲区中剩余的最后一行数据
+    if sse_buffer.strip():
+        parsed_line = parse_sse_line(sse_buffer.strip())
+        if parsed_line and parsed_line["type"] == "data":
+            count, _ = handle_chunk_data(parsed_line["data"], i2s, count)
+
+    return count
+
+
+# ===================== TTS API请求（流式处理版） =====================
 def tts_api_request(text):
     """
-    核心函数：请求TTS API并实时播放音频
+    核心函数：请求TTS API并**实时流式播放**音频
+    边接收数据、边解析、边播放，降低内存占用
     """
     # 1. WiFi连接检查
     if not connect_wifi():
@@ -153,139 +256,91 @@ def tts_api_request(text):
     sock.write(payload_bytes)
     print(f"[API] TTS请求已发送，文本: {text}")
 
-    # 6. 调试：打开日志文件
-    debug_file = open("debug_log.txt", "w")
-    debug_file.write("=== SSE数据解析调试日志 ===\n\n")
-
-    count = 0
-    buffer = ""
-    chunk_num = 0
-    is_done = False  # 在循环外初始化
-
-    while True:
-        chunk = sock.read(RECV_BUFFER_SIZE)
-        chunk_num += 1
-
+    # 6. 接收HTTP响应头部
+    print("[HTTP] 接收响应头部...")
+    headers = b""
+    while b'\r\n\r\n' not in headers:
+        chunk = sock.read(1)
         if not chunk:
-            debug_file.write(f"\n[读取结束] chunk_num={chunk_num}, buffer长度={len(buffer)}\n")
-            break
+            print("[HTTP] 连接中断")
+            sock.close()
+            i2s.deinit()
+            Pin(21, Pin.OUT).value(0)
+            return False
+        headers += chunk
 
-        # 记录原始chunk信息
-        debug_file.write(f"\n[Chunk {chunk_num}] 原始长度={len(chunk)}\n")
-        debug_file.write(f"[Chunk {chunk_num}] 前100字符: {chunk[:100]}\n")
+    header_text = headers.decode('utf-8')
+    print(f"[HTTP] 头部接收完成 ({len(headers)} 字节)")
 
-        buffer += chunk.decode('utf-8')
-        debug_file.write(f"[Chunk {chunk_num}] 处理后buffer长度={len(buffer)}\n")
+    # 检查HTTP状态码
+    if "200 OK" not in header_text:
+        print(f"[HTTP] 错误响应: {header_text[:100]}")
+        sock.close()
+        i2s.deinit()
+        Pin(21, Pin.OUT).value(0)
+        return False
 
-        line_counter = 0
-        while '\n' in buffer:
-            line_counter += 1
-            line, buffer = buffer.split('\n', 1)
-            original_line = line  # 保存原始行
-
-            debug_file.write(f"\n  [Line {line_counter}] 分割前buffer长度={len(buffer) + len(line) + 1}\n")
-            debug_file.write(f"  [Line {line_counter}] line长度={len(line)}\n")
-            debug_file.write(f"  [Line {line_counter}] line内容: {repr(line)}\n")
-
-            line = line.strip()
-            debug_file.write(f"  [Line {line_counter}] strip后: {repr(line)}\n")
-
-            if not line:
-                debug_file.write(f"  [Line {line_counter}] 跳过空行\n")
-                continue
-
-            parsed = parse_sse_line(line)
-            debug_file.write(f"  [Line {line_counter}] parsed类型: {type(parsed)}\n")
-
-            if parsed is None:
-                debug_file.write(f"  [Line {line_counter}] 不是SSE数据行\n")
-                continue
-
-            count += 1
-            debug_file.write(f"  [Line {line_counter}] 有效数据块计数={count}\n")
-
-            if parsed["type"] == "done":
-                debug_file.write(f"  [Line {line_counter}] 收到[DONE]信号\n")
-                is_done = True
+    # 7. 流式处理数据（核心修改点）
+    total_count = 0
+    if "transfer-encoding: chunked" in header_text.lower():
+        print("[HTTP] 检测到chunked编码，开始流式处理...")
+        # 流式处理chunked数据，边接收边播放
+        total_count = stream_chunked_data(sock, i2s)
+    else:
+        # 兼容非chunked编码（仍做流式处理）
+        print("[HTTP] 非chunked编码，开始流式读取...")
+        sse_buffer = ""
+        count = 0
+        while True:
+            chunk = sock.read(RECV_BUFFER_SIZE)
+            if not chunk:
                 break
+            sse_buffer += chunk.decode('utf-8', errors='ignore')
 
-            audio_data, is_done = handle_chunk_data(parsed["data"])  # 这里会更新is_done
-            debug_file.write(f"  [Line {line_counter}] audio_data存在: {audio_data is not None}\n")
-            debug_file.write(f"  [Line {line_counter}] is_done: {is_done}\n")
+            # 解析完整行并播放
+            lines = sse_buffer.split('\n')
+            sse_buffer = lines[-1] if lines else ""
+            for line in lines[:-1]:
+                line = line.strip()
+                if not line or not line.startswith('data:'):
+                    continue
 
-            if audio_data:
-                audio_bytes = ubinascii.a2b_base64(audio_data)
-                debug_file.write(f"  [Line {line_counter}] base64解码后大小={len(audio_bytes)}\n")
-                debug_file.write(f"  [Line {line_counter}] 前10字节: {audio_bytes[:10].hex()}\n")
+                json_str = line[5:]
+                if json_str == '[DONE]':
+                    break
 
                 try:
-                    i2s.write(audio_bytes)
-                    debug_file.write(f"  [Line {line_counter}] I2S写入成功\n")
-                    print(f"✓ 播放块{count}, 大小: {len(audio_bytes)}")
+                    parsed = json.loads(json_str)
+                    count, is_done = handle_chunk_data(parsed, i2s, count)
+                    if is_done:
+                        break
                 except Exception as e:
-                    debug_file.write(f"  [Line {line_counter}] I2S写入失败: {e}\n")
+                    print(f"[SSE] JSON解析失败: {e}")
+                    continue
+            total_count = count
 
-        debug_file.write(f"\n[Chunk {chunk_num}] 处理完成，剩余buffer长度={len(buffer)}\n")
-        debug_file.write(f"[Chunk {chunk_num}] 剩余buffer内容: {repr(buffer[:100])}\n")
-
-        if is_done:
-            debug_file.write(f"[Chunk {chunk_num}] 检测到is_done=True，结束循环\n")
-            break
-
-    debug_file.write(f"\n=== 统计信息 ===\n")
-    debug_file.write(f"总chunk数: {chunk_num}\n")
-    debug_file.write(f"总数据块数: {count}\n")
-    debug_file.write(f"最终buffer长度: {len(buffer)}\n")
-    debug_file.write(f"最终buffer内容: {repr(buffer)}\n")
-
-    debug_file.close()
+    # 8. 关闭资源
     sock.close()
-
-    print(f"共获取 {count} 条数据")
-    print(f"调试日志已保存到 debug_log.txt")
-
-    # 关闭I2S
     i2s.deinit()
     Pin(21, Pin.OUT).value(0)
+    print(f"[播放] 音频设备已释放，共播放 {total_count} 个音频块")
+
+    return True
 
 
 # ===================== 主程序 =====================
 def main():
     print("\n" + "=" * 50)
-    print("ESP32 TTS 流式播放程序 (调试版)")
+    print("ESP32 TTS 流式播放程序 (实时流式处理版)")
     print("=" * 50)
 
-    tts_api_request(TEXT)
+    success = tts_api_request(TEXT)
+
+    if success:
+        print("\n✅ 程序执行成功")
+    else:
+        print("\n❌ 程序执行失败")
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

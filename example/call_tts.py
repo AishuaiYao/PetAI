@@ -51,7 +51,7 @@ def init_audio():
         bits=16,  # 匹配PCM：16位
         format=I2S.MONO,  # 匹配PCM：单声道
         rate=24000,  # 匹配PCM：24000Hz采样率
-        ibuf=24000  # 优化缓冲区大小（16位数据建议采样率/2）
+        ibuf=10000  # 优化缓冲区大小（16位数据建议采样率/2）
     )
     return i2s
 
