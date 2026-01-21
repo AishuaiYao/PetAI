@@ -1,265 +1,214 @@
 import socket
 import json
-import struct
 import time
 import network
 import ubinascii
-import _thread  # ESP32 MicroPython 线程模块
-
+import _thread
 from machine import I2S, Pin
 
 # ===================== 核心配置 =====================
-# WiFi配置
 WIFI_SSID = "CMCC-huahua"
 WIFI_PASSWORD = "*HUAHUAshi1zhimao"
-# API配置
 API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
-TEXT = "我是电子花花，你听的到吗"
 TEXT = "中国国家统计局1月19日发布了2025年全国GDP初步数据。数据显示，2025年，按照可比价格计算，中国大陆实际GDP同比增长5.0%，人均实际GDP同比增长5.1%。2025年的中国经济数据，呈现出一幅令人五味杂陈的复杂图景：名义GDP总量历史性地站上140万亿元的台阶，人均GDP触摸到1.4万美元的门槛，这是国力持续积累的明证；然而，另一组数字却投下了长达一个世纪的阴影——全年仅792万新生儿呱呱坠地，年末总人口较上年锐减339万。"
-
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
 RECV_BUFFER_SIZE = 8192
+
 API_HOST = "dashscope.aliyuncs.com"
 API_PORT = 443
 API_PATH = "/api/v1/services/aigc/multimodal-generation/generation"
-# I2S音频配置
-I2S_SCK_PIN = 9
-I2S_WS_PIN = 10
-I2S_SD_PIN = 8
-AMP_ENABLE_PIN = 21
-SAMPLE_RATE = 24000
-BITS = 16
-CHANNELS = 1
-# 双线程缓冲配置（核心优化）
-AUDIO_QUEUE = []          # 音频数据队列（生产者放，消费者取）
-QUEUE_MAX_SIZE = 10       # 队列最大缓冲块数（防止内存溢出）
-QUEUE_MIN_PRELOAD = 2     # 预加载至少2块数据再开始播放（避免初期卡顿）
-QUEUE_LOCK = _thread.allocate_lock()  # 线程安全锁
-PLAY_FINISH_FLAG = False  # 播放完成标志
-ERROR_FLAG = False        # 错误标志
 
-# ===================== 工具函数 =====================
+# ===================== 线程通信变量 =====================
+audio_buffer = []  # 音频数据缓冲区
+buffer_lock = _thread.allocate_lock()  # 缓冲区锁
+buffer_not_empty = _thread.allocate_lock()  # 条件变量：缓冲区非空
+buffer_not_full = _thread.allocate_lock()  # 条件变量：缓冲区未满
+playback_finished = False
+BUFFER_SIZE = 10  # 缓冲区大小
+
+# 初始化条件变量
+buffer_not_empty.acquire()
+buffer_not_full.acquire()
+
+
+# ===================== WiFi连接 =====================
 def connect_wifi():
-    """WiFi连接（复用原有逻辑）"""
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+
     if wlan.isconnected():
-        print("[WiFi] 已连接WiFi，IP: {}".format(wlan.ifconfig()[0]))
+        print("[WiFi] 已连接")
         return True
-    print(f"[WiFi] 正在连接 {WIFI_SSID}")
+
+    print(f"[WiFi] 连接: {WIFI_SSID}")
     wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+
     timeout = 15
     while timeout > 0:
         if wlan.isconnected():
-            print(f"[WiFi] 连接成功，IP: {wlan.ifconfig()[0]}")
+            print(f"[WiFi] 成功, IP: {wlan.ifconfig()[0]}")
             return True
         timeout -= 1
-        time.sleep(0.5)
+        time.sleep(1)
+        print(f"[WiFi] 连接中...剩余{timeout}秒")
+
     print("[WiFi] 连接失败")
     return False
 
-def parse_sse_line(line_str):
-    """解析单条SSE行（复用原有逻辑）"""
-    if not line_str.startswith('data:'):
-        return None
-    json_str = line_str[5:].strip()
-    if json_str == '[DONE]':
-        return {"type": "done"}
-    try:
-        return {"type": "data", "data": json.loads(json_str)}
-    except:
-        return None
 
-# ===================== 生产者线程：拉取音频数据 =====================
-def producer_thread(sock):
-    """
-    生产者线程：负责接收API的chunked数据，解析音频后放入队列
-    sock: 已建立的SSL连接套接字
-    """
-    global PLAY_FINISH_FLAG, ERROR_FLAG
-    sse_buffer = ""
-    chunk_count = 0
+# ===================== 音频播放线程 =====================
+def audio_player_thread():
+    """线程2：从缓冲区读取音频数据并播放"""
+    global playback_finished
 
-    print("[生产者] 开始接收并解析音频数据...")
-    try:
-        while not PLAY_FINISH_FLAG and not ERROR_FLAG:
-            # 1. 读取chunk大小行
-            size_line = b""
-            while b'\r\n' not in size_line:
-                chunk = sock.read(1)
-                if not chunk:
-                    print("[生产者] 连接中断")
-                    ERROR_FLAG = True
-                    return
-                size_line += chunk
+    print("[播放器] 音频播放线程启动")
 
-            # 2. 解析chunk大小
-            chunk_size_str = size_line.split(b'\r\n')[0].strip()
-            if not chunk_size_str:
-                continue
-            try:
-                chunk_size = int(chunk_size_str, 16)
-            except:
-                print(f"[生产者] chunk大小解析失败: {chunk_size_str}")
-                continue
-
-            # 3. chunk为0表示结束
-            if chunk_size == 0:
-                print("[生产者] 数据接收完成")
-                break
-
-            # 4. 读取chunk数据
-            received = 0
-            chunk_data = b""
-            while received < chunk_size:
-                to_read = min(4096, chunk_size - received)
-                data = sock.read(to_read)
-                if not data:
-                    break
-                chunk_data += data
-                received += len(data)
-
-            # 5. 解析SSE数据并提取音频
-            sse_buffer += chunk_data.decode('utf-8', 'ignore')
-            lines = sse_buffer.split('\n')
-            sse_buffer = lines[-1] if lines else ""  # 保留未完成的行
-
-            for line in lines[:-1]:
-                line = line.strip()
-                if not line:
-                    continue
-                parsed = parse_sse_line(line)
-                if not parsed:
-                    continue
-
-                if parsed["type"] == "done":
-                    PLAY_FINISH_FLAG = True
-                    break
-
-                if parsed["type"] == "data":
-                    audio_info = parsed["data"].get("output", {}).get("audio", {})
-                    if "data" in audio_info:
-                        # 解码Base64音频数据
-                        audio_bytes = ubinascii.a2b_base64(audio_info["data"])
-                        chunk_count += 1
-
-                        # 线程安全地放入队列（加锁防止冲突）
-                        with QUEUE_LOCK:
-                            if len(AUDIO_QUEUE) < QUEUE_MAX_SIZE:
-                                AUDIO_QUEUE.append(audio_bytes)
-                                print(f"[生产者] 放入队列第{chunk_count}块，队列当前大小: {len(AUDIO_QUEUE)}")
-                            else:
-                                print(f"[生产者] 队列已满，等待...")
-                                time.sleep(0.05)  # 队列满时短暂等待
-
-            # 读取chunk结尾的\r\n
-            sock.read(2)
-
-    except Exception as e:
-        print(f"[生产者] 异常: {e}")
-        ERROR_FLAG = True
-    finally:
-        PLAY_FINISH_FLAG = True
-        print("[生产者] 线程结束")
-
-# ===================== 消费者线程：播放音频 =====================
-def consumer_thread():
-    """
-    消费者线程：专门从队列读取音频数据，通过I2S播放
-    核心：只负责播放，不处理网络，避免卡顿
-    """
-    global ERROR_FLAG
-    # 初始化音频设备
-    Pin(AMP_ENABLE_PIN, Pin.OUT).value(1)
+    # 初始化I2S
+    Pin(21, Pin.OUT).value(1)
     i2s = I2S(
         0,
-        sck=Pin(I2S_SCK_PIN),
-        ws=Pin(I2S_WS_PIN),
-        sd=Pin(I2S_SD_PIN),
+        sck=Pin(9),
+        ws=Pin(10),
+        sd=Pin(8),
         mode=I2S.TX,
-        bits=BITS,
+        bits=16,
         format=I2S.MONO,
-        rate=SAMPLE_RATE,
-        ibuf=10000  # 增大内部缓冲区，进一步减少卡顿
+        rate=24000,
+        ibuf=48000
     )
-    play_count = 0
 
-    print("[消费者] 等待预加载音频数据...")
-    # 预加载：等待队列有足够数据再开始播放（避免初期卡顿）
-    while len(AUDIO_QUEUE) < QUEUE_MIN_PRELOAD and not ERROR_FLAG:
-        time.sleep(0.05)
+    chunk_count = 0
 
-    if ERROR_FLAG:
-        print("[消费者] 预加载阶段出错，退出")
-        i2s.deinit()
-        Pin(AMP_ENABLE_PIN, Pin.OUT).value(0)
+    while True:
+        # 等待缓冲区有数据
+        try:
+            buffer_not_empty.acquire()
+        except:
+            # 超时或中断
+            if playback_finished:
+                break
+            continue
+
+        with buffer_lock:
+            if not audio_buffer:
+                # 缓冲区为空，继续等待
+                continue
+
+            # 从缓冲区取出音频数据
+            audio_data = audio_buffer.pop(0)
+
+            # 通知生产者缓冲区有空位
+            try:
+                buffer_not_full.release()
+            except:
+                pass
+
+        # 检查结束信号
+        if audio_data is None:
+            print("[播放器] 收到结束信号")
+            break
+
+        # 播放音频
+        try:
+            i2s.write(audio_data)
+            chunk_count += 1
+            print(f"[播放器] 播放块{chunk_count}, 大小: {len(audio_data)}")
+        except Exception as e:
+            print(f"[播放器] 播放错误: {e}")
+            break
+
+    # 清理资源
+    i2s.deinit()
+    Pin(21, Pin.OUT).value(0)
+    print(f"[播放器] 播放结束，共播放 {chunk_count} 个音频块")
+
+
+# ===================== 缓冲区管理 =====================
+def put_audio_data(audio_data):
+    """将音频数据放入缓冲区"""
+    global playback_finished
+
+    while not playback_finished:
+        with buffer_lock:
+            if len(audio_buffer) < BUFFER_SIZE:
+                audio_buffer.append(audio_data)
+
+                # 通知消费者有数据可用
+                try:
+                    buffer_not_empty.release()
+                except:
+                    pass
+                return True
+
+        # 缓冲区满，等待
+        try:
+            buffer_not_full.acquire(timeout=0.1)
+        except:
+            if playback_finished:
+                return False
+
+    return False
+
+
+def signal_playback_finished():
+    """发送播放结束信号"""
+    global playback_finished
+    playback_finished = True
+
+    with buffer_lock:
+        # 清空缓冲区并发送结束信号
+        audio_buffer.clear()
+        audio_buffer.append(None)
+
+        # 通知消费者
+        try:
+            buffer_not_empty.release()
+        except:
+            pass
+
+        # 通知生产者
+        try:
+            buffer_not_full.release()
+        except:
+            pass
+
+
+# ===================== 数据接收线程 =====================
+def data_receiver_thread(text):
+    """线程1：接收TTS API数据并放入缓冲区"""
+    global playback_finished
+
+    print("[接收器] 数据接收线程启动")
+
+    if not connect_wifi():
+        signal_playback_finished()
         return
 
-    print("[消费者] 开始播放音频...")
-    try:
-        while not PLAY_FINISH_FLAG or len(AUDIO_QUEUE) > 0:
-            # 线程安全地从队列取数据
-            with QUEUE_LOCK:
-                if len(AUDIO_QUEUE) > 0:
-                    audio_bytes = AUDIO_QUEUE.pop(0)  # 取队列头部（先进先出）
-                else:
-                    audio_bytes = None
+    # 建立SSL连接
+    print(f"[API] 连接: {API_HOST}:{API_PORT}")
+    addr_info = socket.getaddrinfo(API_HOST, API_PORT)[0]
+    sock = socket.socket(addr_info[0], addr_info[1], addr_info[2])
+    sock.setsockopt(1, 8, RECV_BUFFER_SIZE)
+    sock.settimeout(15)
+    sock.connect(addr_info[-1])
 
-            if audio_bytes:
-                # 播放音频（I2S.write是阻塞的，但此时队列已有缓冲，不影响）
-                i2s.write(audio_bytes)
-                play_count += 1
-                print(f"[消费者] 播放第{play_count}块，剩余队列: {len(AUDIO_QUEUE)}")
-            else:
-                # 队列空时短暂等待，避免空轮询占用CPU
-                time.sleep(0.01)
+    import ssl
+    sock = ssl.wrap_socket(sock, server_hostname=API_HOST)
+    print("[API] SSL连接成功")
 
-        # 播放完所有数据后，清空I2S缓冲区
-        i2s.flush()
-        print(f"[消费者] 播放完成，共播放{play_count}块")
-
-    except Exception as e:
-        print(f"[消费者] 播放异常: {e}")
-        ERROR_FLAG = True
-    finally:
-        # 释放音频资源
-        i2s.deinit()
-        Pin(AMP_ENABLE_PIN, Pin.OUT).value(0)
-        print("[消费者] 线程结束")
-
-# ===================== 核心TTS请求函数 =====================
-def tts_api_request(text):
-    """主函数：初始化连接，启动双线程"""
-    global PLAY_FINISH_FLAG, ERROR_FLAG, AUDIO_QUEUE
-    # 重置全局状态
-    PLAY_FINISH_FLAG = False
-    ERROR_FLAG = False
-    AUDIO_QUEUE = []
-
-    # 1. 检查WiFi
-    if not connect_wifi():
-        return False
-
-    # 2. 建立SSL连接
-    print(f"[API] 连接 {API_HOST}:{API_PORT}")
-    try:
-        addr_info = socket.getaddrinfo(API_HOST, API_PORT)[0]
-        sock = socket.socket(addr_info[0], addr_info[1], addr_info[2])
-        sock.setsockopt(1, 8, RECV_BUFFER_SIZE)
-        sock.settimeout(15)
-        sock.connect(addr_info[-1])
-        sock = ssl.wrap_socket(sock, server_hostname=API_HOST)
-    except Exception as e:
-        print(f"[API] 连接失败: {e}")
-        return False
-
-    # 3. 构建并发送请求
-    payload = json.dumps({
+    # 构建请求
+    payload_dict = {
         "model": "qwen3-tts-flash",
         "input": {"text": text},
-        "parameters": {"voice": VOICE, "language_type": LANGUAGE}
-    })
+        "parameters": {
+            "voice": VOICE,
+            "language_type": LANGUAGE
+        }
+    }
+    payload = json.dumps(payload_dict)
+
+    # 发送请求
     payload_bytes = payload.encode('utf-8')
     request_headers = (
         f"POST {API_PATH} HTTP/1.1\r\n"
@@ -270,71 +219,114 @@ def tts_api_request(text):
         f"Content-Length: {len(payload_bytes)}\r\n"
         f"Connection: close\r\n\r\n"
     )
-    try:
-        sock.write(request_headers.encode('utf-8'))
-        sock.write(payload_bytes)
-    except Exception as e:
-        print(f"[API] 发送请求失败: {e}")
-        sock.close()
-        return False
 
-    # 4. 接收响应头部
+    sock.write(request_headers.encode('utf-8'))
+    sock.write(payload_bytes)
+    print(f"[API] 请求已发送，文本长度: {len(text)}")
+
+    # 接收HTTP响应头部
     print("[HTTP] 接收响应头部...")
     headers = b""
-    try:
-        while b'\r\n\r\n' not in headers:
-            chunk = sock.read(1)
-            if not chunk:
-                print("[HTTP] 头部接收中断")
-                sock.close()
-                return False
-            headers += chunk
-        header_text = headers.decode('utf-8')
-        if "200 OK" not in header_text:
-            print(f"[HTTP] 响应错误: {header_text[:100]}")
+    while b'\r\n\r\n' not in headers:
+        chunk = sock.read(1)
+        if not chunk:
+            print("[HTTP] 连接中断")
+            signal_playback_finished()
             sock.close()
-            return False
-        if "transfer-encoding: chunked" not in header_text.lower():
-            print("[HTTP] 不支持非chunked编码")
-            sock.close()
-            return False
-    except Exception as e:
-        print(f"[HTTP] 头部解析失败: {e}")
+            return
+        headers += chunk
+
+    header_text = headers.decode('utf-8')
+
+    if "200 OK" not in header_text:
+        print(f"[HTTP] 错误: {header_text[:100]}")
+        signal_playback_finished()
         sock.close()
-        return False
+        return
 
-    # 5. 启动双线程
-    print("[主线程] 启动生产者线程（接收数据）")
-    _thread.start_new_thread(producer_thread, (sock,))  # 传入已建立的sock
-    print("[主线程] 启动消费者线程（播放音频）")
-    _thread.start_new_thread(consumer_thread, ())
+    # 流式解析数据
+    print("[接收器] 开始流式解析数据...")
+    sse_buffer = ""
 
-    # 6. 主线程等待结束
-    while not PLAY_FINISH_FLAG or len(AUDIO_QUEUE) > 0:
-        if ERROR_FLAG:
-            print("[主线程] 检测到错误，终止任务")
-            PLAY_FINISH_FLAG = True
-        time.sleep(0.1)
+    try:
+        while not playback_finished:
+            # 读取数据
+            data = sock.read(4096)
+            if not data:
+                break
 
-    # 7. 清理资源
+            sse_buffer += data.decode('utf-8', 'ignore')
+
+            # 解析SSE格式数据
+            lines = sse_buffer.split('\n')
+            # 保留不完整的行
+            sse_buffer = lines[-1]
+
+            for line in lines[:-1]:
+                line = line.strip()
+                if not line.startswith('data:'):
+                    continue
+
+                json_str = line[5:]
+                if json_str == '[DONE]':
+                    print("[接收器] 收到结束信号[DONE]")
+                    continue
+
+                try:
+                    parsed = json.loads(json_str)
+
+                    # 检查是否结束
+                    if parsed.get("output", {}).get("finish_reason") == "stop":
+                        print("[接收器] 收到stop信号")
+                        break
+
+                    # 提取音频数据
+                    audio_info = parsed.get("output", {}).get("audio", {})
+                    if "data" in audio_info:
+                        audio_bytes = ubinascii.a2b_base64(audio_info["data"])
+
+                        # 将音频数据放入缓冲区
+                        if not put_audio_data(audio_bytes):
+                            break
+                        print(f"[接收器] 音频块入队, 大小: {len(audio_bytes)}")
+
+                except Exception as e:
+                    print(f"[接收器] 解析错误: {e}")
+                    continue
+    except Exception as e:
+        print(f"[接收器] 发生错误: {e}")
+
+    # 发送结束信号
+    signal_playback_finished()
     sock.close()
-    print("[主线程] 所有任务结束")
-    return not ERROR_FLAG
+    print("[接收器] 数据接收线程结束")
+
 
 # ===================== 主程序 =====================
 def main():
-    print("\n" + "=" * 60)
-    print("ESP32 TTS 双线程流式播放程序（解决卡顿）")
-    print("=" * 60)
-    # 导入ssl模块（放在main里，避免初始化顺序问题）
-    global ssl
-    import ssl
+    print("\n" + "=" * 50)
+    print("ESP32 TTS 双线程流式播放程序")
+    print("=" * 50)
 
-    success = tts_api_request(TEXT)
-    if success:
-        print("\n✅ 播放成功")
-    else:
-        print("\n❌ 播放失败")
+    try:
+        # 启动音频播放线程
+        _thread.start_new_thread(audio_player_thread, ())
+
+        # 等待一小段时间确保播放线程启动
+        time.sleep(0.5)
+
+        # 启动数据接收线程（在主线程中运行）
+        data_receiver_thread(TEXT)
+
+        # 等待播放完成
+        while not playback_finished:
+            time.sleep(0.1)
+
+        print("\n✅ 程序执行完成")
+    except Exception as e:
+        print(f"\n❌ 程序执行失败: {e}")
+        signal_playback_finished()
+
 
 if __name__ == "__main__":
     main()
