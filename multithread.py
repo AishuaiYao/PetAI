@@ -10,7 +10,7 @@ from machine import I2S, Pin
 WIFI_SSID = "CMCC-huahua"
 WIFI_PASSWORD = "*HUAHUAshi1zhimao"
 API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
-TEXT = "中国国家统计局1月19日发布了2025年全国GDP初步数据。数据显示，2025年，按照可比价格计算，中国大陆实际GDP同比增长5.0%，人均实际GDP同比增长5.1%。2025年的中国经济数据，呈现出一幅令人五味杂陈的复杂图景：名义GDP总量历史性地站上140万亿元的台阶，人均GDP触摸到1.4万美元的门槛，这是国力持续积累的明证；然而，另一组数字却投下了长达一个世纪的阴影——全年仅792万新生儿呱呱坠地，年末总人口较上年锐减339万。"
+TEXT = "中国国家统计局1月19日发布了2025年全国GDP初步数据。数据显示，2025年，按照可比价格计算，中国大陆实际GDP同比增长5.0%，人均实际GDP同比增长5.1%。"
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
 RECV_BUFFER_SIZE = 8192
@@ -330,3 +330,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
