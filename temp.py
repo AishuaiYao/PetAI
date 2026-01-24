@@ -58,7 +58,7 @@ def connect_wifi():
 # ===================== 音频播放线程 =====================
 def audio_player():
     print("音频播放线程启动")
-
+    time.sleep(1)
     # 初始化I2S
     Pin(21, Pin.OUT).value(1)
     audio_out = I2S(
@@ -76,6 +76,7 @@ def audio_player():
     chunk_count = 0
 
     while True:
+
         with buffer_lock:
             if audio_buffer:
                 audio_chunk = audio_buffer.pop(0)
@@ -186,7 +187,6 @@ def receive_audio_data(text):
 
     global  receiving_complete
     with buffer_lock:
-        print("receiving_complete = True")
         receiving_complete = True
 
     return True
@@ -324,7 +324,6 @@ def handle_chunk_data(chunk, count):
         # 解码音频数据
         audio_bytes = ubinascii.a2b_base64(audio_info["data"])
 
-
         # 添加到播放缓冲区
         with buffer_lock:
             audio_buffer.append(audio_bytes)
@@ -340,8 +339,6 @@ def main():
     # 启动播放线程
     _thread.start_new_thread(audio_player, ())
 
-    # 给播放线程一点启动时间
-    time.sleep(0.5)
 
     # 在主线程中运行接收函数
     receive_audio_data(TEXT)
