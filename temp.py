@@ -83,7 +83,7 @@ def audio_player():
                 # 播放音频
                 audio_out.write(audio_chunk)
                 chunk_count += 1
-                print(f"播放音频块{chunk_count}, 大小: {len(audio_chunk)}")
+                print(f"播放音频块{chunk_count} 大小: {len(audio_chunk)}还剩{len(audio_buffer)}个块")
             elif receiving_complete:
                 # 接收已完成且缓冲区为空 -> 所有数据都播放完了
                 break
@@ -177,8 +177,8 @@ def receive_audio_data(text):
 
 
     # 8. 关闭资源
-    sock.close()
-    Pin(21, Pin.OUT).value(0)
+    # sock.close()
+    # Pin(21, Pin.OUT).value(0)
     print(f"[播放] 音频设备已释放，共播放 {total_count} 个音频块")
 
     return True
@@ -223,14 +223,14 @@ def stream_chunked_data(sock):
         received = 0
         chunk_data = b""
         while received < chunk_size:
-            # to_read = min(4096, chunk_size - received)
-            to_read = chunk_size - received
-
+            to_read = min(4096, chunk_size - received)
             data = sock.read(to_read)
             if not data:
                 break
             chunk_data += data
             received += len(data)
+            print(f"received{len(received)}/{chunk_size}")
+
 
         print(f"[HTTP] 接收chunk: 大小={chunk_size}, 实际={len(chunk_data)}")
 
@@ -240,6 +240,7 @@ def stream_chunked_data(sock):
         # 6. 解析SSE缓冲区中的完整行（核心流式解析逻辑）
         # 按换行符分割，只处理完整的行，不完整的留在缓冲区
         lines = sse_buffer.split('\n')
+        print(f"lines:{len(lines)}")
         # 最后一行可能不完整，放回缓冲区
         sse_buffer = lines[-1] if lines else ""
 
@@ -257,6 +258,7 @@ def stream_chunked_data(sock):
             if parsed_line["type"] == "done":
                 print("[SSE] 收到[DONE]信号")
                 is_done = True
+                receiving_complete = True
                 break
 
             if parsed_line["type"] == "data":
@@ -311,7 +313,7 @@ def handle_chunk_data(chunk, count):
         with buffer_lock:
             audio_buffer.append(audio_bytes)
         count += 1
-        print(f"✓ 播放块{count}, 大小: {len(audio_bytes)}")
+        # print(f"✓ 播放块{count}大小: {len(audio_bytes)}")
 
     return count, False
 
