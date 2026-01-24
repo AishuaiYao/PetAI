@@ -15,7 +15,7 @@ TEXT = "我是电子花花，你听的到吗"
 TEXT = "中国国家统计局1月19日发布了2025年全国GDP初步数据。数据显示，2025年，按照可比价格计算，中国大陆实际GDP同比增长5.0%，人均实际GDP同比增长5.1%。"
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
-RECV_BUFFER_SIZE = 8192
+RECV_BUFFER_SIZE = 81920
 
 # TTS API配置
 API_HOST = "dashscope.aliyuncs.com"
@@ -76,19 +76,26 @@ def audio_player():
     chunk_count = 0
 
     while True:
-        # 检查buffer是否有数据
         with buffer_lock:
             if audio_buffer:
                 audio_chunk = audio_buffer.pop(0)
-                # 播放音频
-                audio_out.write(audio_chunk)
-                chunk_count += 1
-                print(f"播放音频块{chunk_count} 大小: {len(audio_chunk)}")
+                print(f"[audio]播放音频块{chunk_count + 1} 大小: {len(audio_chunk)}, 缓冲区剩余: {len(audio_buffer)} 块")
             elif receiving_complete:
                 # 接收已完成且缓冲区为空 -> 所有数据都播放完了
+                print("播放线程检测到接收完成且缓冲区为空，准备退出")
                 break
+            else:
+                # 缓冲区为空但接收未完成，打印状态
+                audio_chunk = None
 
-        # 如果没有数据且接收未完成，快速循环检查
+        # 在锁外播放音频，避免阻塞接收线程
+        if audio_chunk is not None:
+            audio_out.write(audio_chunk)
+            chunk_count += 1
+
+
+
+
 
     # 清理
     audio_out.deinit()
@@ -174,10 +181,13 @@ def receive_audio_data(text):
         total_count = stream_chunked_data(sock)
 
 
-    # 8. 关闭资源
-    # sock.close()
-    # Pin(21, Pin.OUT).value(0)
-    print(f"[播放] 音频设备已释放，共播放 {total_count} 个音频块")
+
+    print(f"共接收了 {total_count} 个音频块")
+
+    global  receiving_complete
+    with buffer_lock:
+        print("receiving_complete = True")
+        receiving_complete = True
 
     return True
 
@@ -267,7 +277,7 @@ def stream_chunked_data(sock):
                     received = chunk_size
                 break
 
-        print(f"[HTTP] 接收chunk: 大小={chunk_size}, 实际={received}")
+        # print(f"[HTTP] 接收chunk: 大小={chunk_size}, 实际={received}")
 
         # 7. 读取chunk结尾的\r\n
         sock.read(2)  # 读取\r\n
@@ -302,6 +312,7 @@ def parse_sse_line(line_str):
 
 def handle_chunk_data(chunk, count):
     """处理单个音频块并实时播放"""
+
     if "output" not in chunk:
         return count, False
 
@@ -310,11 +321,15 @@ def handle_chunk_data(chunk, count):
 
     audio_info = chunk["output"].get("audio", {})
     if "data" in audio_info:
+        # 解码音频数据
         audio_bytes = ubinascii.a2b_base64(audio_info["data"])
+
+
+        # 添加到播放缓冲区
         with buffer_lock:
             audio_buffer.append(audio_bytes)
         count += 1
-
+        print(f"[HTTP] base64的数据长度{len(audio_info['data'])} 解码后二进制数据长度{len(audio_bytes)} 缓冲区大小{len(audio_buffer)} ")
     return count, False
 
 
@@ -330,6 +345,15 @@ def main():
 
     # 在主线程中运行接收函数
     receive_audio_data(TEXT)
+
+    # 等待接收完成，并且缓冲区播放完毕
+    while True:
+        with buffer_lock:
+            buffer_empty = len(audio_buffer) == 0
+            all_done = receiving_complete and buffer_empty
+        if all_done:
+            break
+        time.sleep(1)
 
     print("程序执行完成")
 
