@@ -217,50 +217,57 @@ def stream_chunked_data(sock):
             print("[HTTP] 收到结束chunk (size=0)")
             break
 
-        # 4. 读取指定大小的数据（流式读取）
+        # 4. 边读取边解析，避免阻塞播放线程
         received = 0
-        chunk_data = b""
         while received < chunk_size:
-            # to_read = min(4096, chunk_size - received)
-            data = sock.read(chunk_size)
+            # 每次只读取一小块数据，避免长时间阻塞
+            to_read = min(1024, chunk_size - received)
+            data = sock.read(to_read)
             if not data:
                 break
-            chunk_data += data
+
+            # 5. 立即将读取的数据追加到SSE缓冲区并解码
+            chunk_data_str = data.decode('utf-8', 'ignore')
+            sse_buffer += chunk_data_str
             received += len(data)
 
+            # 6. 立即解析缓冲区中的完整行，边解析边放入播放buffer
+            while '\n' in sse_buffer:
+                # 提取第一行
+                line_end = sse_buffer.find('\n')
+                line = sse_buffer[:line_end]
+                sse_buffer = sse_buffer[line_end + 1:]
 
-        print(f"[HTTP] 接收chunk: 大小={chunk_size}, 实际={len(chunk_data)}")
+                line = line.strip()
+                if not line:
+                    continue
 
-        # 5. 将当前chunk数据转换为字符串并拼接到SSE缓冲区
-        sse_buffer += chunk_data.decode('utf-8', 'ignore')
+                # 解析SSE行
+                parsed_line = parse_sse_line(line)
+                if not parsed_line:
+                    continue
 
-        # 6. 解析SSE缓冲区中的完整行（核心流式解析逻辑）
-        # 按换行符分割，只处理完整的行，不完整的留在缓冲区
-        lines = sse_buffer.split('\n')
-        # 最后一行可能不完整，放回缓冲区
-        sse_buffer = lines[-1] if lines else ""
+                if parsed_line["type"] == "done":
+                    print("[SSE] 收到[DONE]信号")
+                    is_done = True
+                    break
 
-        # 处理所有完整的行
-        for line in lines[:-1]:
-            line = line.strip()
-            if not line:
-                continue
+                if parsed_line["type"] == "data":
+                    count, is_done = handle_chunk_data(parsed_line["data"], count)
+                    if is_done:
+                        print("[SSE] 收到完成信号")
+                        break
 
-            # 解析SSE行
-            parsed_line = parse_sse_line(line)
-            if not parsed_line:
-                continue
-
-            if parsed_line["type"] == "done":
-                print("[SSE] 收到[DONE]信号")
-                is_done = True
+            # 如果收到完成信号，提前结束读取
+            if is_done:
+                # 读取剩余的chunk数据以保持HTTP协议正确性
+                remaining = chunk_size - received
+                if remaining > 0:
+                    sock.read(remaining)
+                    received = chunk_size
                 break
 
-            if parsed_line["type"] == "data":
-                count, is_done = handle_chunk_data(parsed_line["data"], count)
-                if is_done:
-                    print("[SSE] 收到完成信号")
-                    break
+        print(f"[HTTP] 接收chunk: 大小={chunk_size}, 实际={received}")
 
         # 7. 读取chunk结尾的\r\n
         sock.read(2)  # 读取\r\n
