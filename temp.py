@@ -83,7 +83,7 @@ def audio_player():
                 # 播放音频
                 audio_out.write(audio_chunk)
                 chunk_count += 1
-                print(f"播放音频块{chunk_count} 大小: {len(audio_chunk)}还剩{len(audio_buffer)}个块")
+                print(f"播放音频块{chunk_count} 大小: {len(audio_chunk)}")
             elif receiving_complete:
                 # 接收已完成且缓冲区为空 -> 所有数据都播放完了
                 break
@@ -109,7 +109,7 @@ def receive_audio_data(text):
     sock = socket.socket(addr_info[0], addr_info[1], addr_info[2])
     sock.setsockopt(1, 8, RECV_BUFFER_SIZE)
 
-    sock.settimeout(15)
+    sock.settimeout(30)
     sock.connect(addr_info[-1])
 
     import ssl
@@ -152,7 +152,6 @@ def receive_audio_data(text):
         if not chunk:
             print("[HTTP] 连接中断")
             sock.close()
-            # i2s.deinit()
             Pin(21, Pin.OUT).value(0)
             return False
         headers += chunk
@@ -164,7 +163,6 @@ def receive_audio_data(text):
     if "200 OK" not in header_text:
         print(f"[HTTP] 错误响应: {header_text[:100]}")
         sock.close()
-        # i2s.deinit()
         Pin(21, Pin.OUT).value(0)
         return False
 
@@ -223,13 +221,12 @@ def stream_chunked_data(sock):
         received = 0
         chunk_data = b""
         while received < chunk_size:
-            to_read = min(4096, chunk_size - received)
-            data = sock.read(to_read)
+            # to_read = min(4096, chunk_size - received)
+            data = sock.read(chunk_size)
             if not data:
                 break
             chunk_data += data
             received += len(data)
-            print(f"received{len(received)}/{chunk_size}")
 
 
         print(f"[HTTP] 接收chunk: 大小={chunk_size}, 实际={len(chunk_data)}")
@@ -240,7 +237,6 @@ def stream_chunked_data(sock):
         # 6. 解析SSE缓冲区中的完整行（核心流式解析逻辑）
         # 按换行符分割，只处理完整的行，不完整的留在缓冲区
         lines = sse_buffer.split('\n')
-        print(f"lines:{len(lines)}")
         # 最后一行可能不完整，放回缓冲区
         sse_buffer = lines[-1] if lines else ""
 
@@ -258,7 +254,6 @@ def stream_chunked_data(sock):
             if parsed_line["type"] == "done":
                 print("[SSE] 收到[DONE]信号")
                 is_done = True
-                receiving_complete = True
                 break
 
             if parsed_line["type"] == "data":
@@ -308,12 +303,10 @@ def handle_chunk_data(chunk, count):
 
     audio_info = chunk["output"].get("audio", {})
     if "data" in audio_info:
-        # 解码Base64音频数据并立即播放
         audio_bytes = ubinascii.a2b_base64(audio_info["data"])
         with buffer_lock:
             audio_buffer.append(audio_bytes)
         count += 1
-        # print(f"✓ 播放块{count}大小: {len(audio_bytes)}")
 
     return count, False
 
