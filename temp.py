@@ -94,9 +94,6 @@ def audio_player():
             audio_out.write(audio_chunk)
             chunk_count += 1
 
-    # 清理
-    # audio_out.deinit()
-    # Pin(21, Pin.OUT).value(0)
     print(f"播放完成，共播放 {chunk_count} 个音频块")
 
 
@@ -104,8 +101,6 @@ def audio_player():
 def receive_audio_data(text):
     print("数据接收线程启动")
 
-    if not connect_wifi():
-        return
 
     # 3. 建立SSL连接
     print(f"[API] 连接TTS API: {API_HOST}:{API_PORT}")
@@ -332,11 +327,12 @@ def handle_chunk_data(chunk, count):
 def main():
     print("\n=== ESP32 TTS 流式播放 ===")
 
+    if not connect_wifi():
+        return
     # 启动播放线程
     _thread.start_new_thread(audio_player, ())
 
 
-    # 在主线程中运行接收函数
     receive_audio_data(TEXT)
 
     # 等待接收完成，并且缓冲区播放完毕
