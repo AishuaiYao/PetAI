@@ -94,10 +94,9 @@ def audio_player():
             audio_out.write(audio_chunk)
             chunk_count += 1
 
-
     # 清理
-    audio_out.deinit()
-    Pin(21, Pin.OUT).value(0)
+    # audio_out.deinit()
+    # Pin(21, Pin.OUT).value(0)
     print(f"播放完成，共播放 {chunk_count} 个音频块")
 
 
@@ -155,17 +154,10 @@ def receive_audio_data(text):
     while b'\r\n\r\n' not in headers:
         chunk = sock.read(1)
         if not chunk:
-            # 增加重试机制，避免误判
-            retry = 0
-            while retry < 3 and not chunk:
-                time.sleep(0.1)
-                chunk = sock.read(1)
-                retry += 1
-            if not chunk:
-                print("[HTTP] 连接中断")
-                sock.close()
-                Pin(21, Pin.OUT).value(0)
-                return False
+            print("[HTTP] 连接中断")
+            sock.close()
+            Pin(21, Pin.OUT).value(0)
+            return False
         headers += chunk
 
     header_text = headers.decode('utf-8')
@@ -211,16 +203,8 @@ def stream_chunked_data(sock):
         while b'\r\n' not in size_line:
             chunk = sock.read(1)
             if not chunk:
-                # 增加重试机制，避免误判
-                retry = 0
-                while retry < 10 and not chunk:
-                    time.sleep(0.1)
-                    print(retry)
-                    chunk = sock.read(1)
-                    retry += 1
-                if not chunk:
-                    print("[HTTP] 连接中断，结束流式处理")
-                    return count
+                print("[HTTP] 连接中断，结束流式处理")
+                return count
             size_line += chunk
 
         # 2. 解析chunk大小（十六进制）
