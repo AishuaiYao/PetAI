@@ -38,6 +38,7 @@ TTS_CHANNELS = 1
 audio_buffer = []  # 音频数据缓冲区
 buffer_lock = _thread.allocate_lock()  # 保护buffer的锁
 tts_receiving_complete = False  # 标记TTS接收线程是否已完成所有工作
+conversation_history = []  # 对话历史，最多保存最近5轮
 
 
 def connect_wifi():
@@ -235,10 +236,16 @@ def asr_api_call(wav_data):
 
 
 def qwen_api_call(text):
+    global conversation_history
+
     print("[Qwen] 调用API...")
-    payload_dict = {"model": "qwen-plus", "messages": [{"role": "system",
-                                                        "content": "你是一个ai陪伴机器人，你的名字叫花花，请你和用户对话，每次对话返回的字数不必太多，20字左右就行"},
-                                                       {"role": "user", "content": text}]}
+
+    # 构建消息列表：system + 历史对话 + 当前问题
+    messages = [{"role": "system", "content": "你是一个ai陪伴机器人，你的名字叫花花，请你和用户对话，每次对话返回的字数不必太多，20字左右就行"}]
+    messages.extend(conversation_history)
+    messages.append({"role": "user", "content": text})
+
+    payload_dict = {"model": "qwen-plus", "messages": messages}
     payload_bytes = json.dumps(payload_dict).encode('utf-8')
 
     addr_info = socket.getaddrinfo(API_HOST, 443)[0]
@@ -538,16 +545,16 @@ def tts_api_call(text):
 
     print(f"共接收了 {total_count} 个音频块")
 
-    global  receiving_complete
+    global tts_receiving_complete
     with buffer_lock:
-        receiving_complete = True
+        tts_receiving_complete = True
     print("[TTS] 播放完成")
 
     return True
 
 
 def main():
-    global vad_threshold
+    global vad_threshold, conversation_history
 
     print("===== 语音助手启动 =====")
     if not connect_wifi():
@@ -581,6 +588,13 @@ def main():
             # 获取AI回复
             ai_text = qwen_api_call(user_text)
             if ai_text:
+                # 记录对话历史（用户+AI）
+                conversation_history.append({"role": "user", "content": user_text})
+                conversation_history.append({"role": "assistant", "content": ai_text})
+                # 限制历史长度为最近10轮（20条消息）
+                if len(conversation_history) > 20:
+                    conversation_history = conversation_history[-20:]
+
                 # 语音合成与播放（多线程非阻塞）
                 tts_api_call(ai_text)
 
