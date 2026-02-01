@@ -14,8 +14,8 @@ SAMPLE_RATE = 16000
 RECV_BUFFER_SIZE = 8192
 vad_threshold = 500
 VAD_INITIALIZATION_SECONDS = 2
-SILENCE_FRAMES = 5
-VOICE_FRAMES = 5
+SILENCE_FRAMES = 10
+VOICE_FRAMES = 10
 
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
@@ -132,7 +132,8 @@ def collect_audio(mic):
     chunk_size = 3200
     collected = bytearray()
     silence_count = 0
-    voice_buffer = []
+    pre_buffer = []  # 预缓存，保存最近的10个chunk（5个可能静音 + 5个语音）
+    post_buffer = []  # 后缓存，保存录音结束前的静音chunks
     voice_count = 0
     recording = False
 
@@ -143,29 +144,38 @@ def collect_audio(mic):
         rms, has_voice = detect_voice_in_chunk(chunk)
 
         if not recording:
-            voice_buffer.append(chunk)
+            pre_buffer.append(chunk)
+            if len(pre_buffer) > 10:
+                pre_buffer.pop(0)
+
             if has_voice:
                 voice_count += 1
                 print(f"[VAD] 检测到语音: 能量={rms:.2f}, 阈值={vad_threshold:.2f}")
             else:
                 voice_count = 0
-                voice_buffer = []
+                print(f"[VAD] 检测到静音: 能量={rms:.2f}, 阈值={vad_threshold:.2f}")
 
             if voice_count >= VOICE_FRAMES:
                 print("[ASR] 检测到说话，开始录音...")
                 recording = True
                 collected = bytearray()
-                for buf in voice_buffer:
+                for buf in pre_buffer:
                     collected += buf
         else:
             collected += chunk
             if not has_voice:
                 silence_count += 1
+                post_buffer.append(chunk)
+                print(f"[VAD] 检测到静音: 能量={rms:.2f}, 阈值={vad_threshold:.2f} [录音中]")
                 if silence_count >= SILENCE_FRAMES:
                     print("[ASR] 检测到静音，录音结束")
+                    for buf in post_buffer:
+                        collected += buf
                     break
             else:
                 silence_count = 0
+                post_buffer = []  # 检测到语音时清空post_buffer
+                print(f"[VAD] 检测到语音: 能量={rms:.2f}, 阈值={vad_threshold:.2f} [录音中]")
 
     print(f"[ASR] 采集完成: {len(collected)}字节")
     return collected
