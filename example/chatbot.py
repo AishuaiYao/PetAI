@@ -14,8 +14,8 @@ SAMPLE_RATE = 16000
 RECV_BUFFER_SIZE = 8192
 vad_threshold = 500
 VAD_INITIALIZATION_SECONDS = 2
-SILENCE_FRAMES = 20
-VOICE_FRAMES = 20
+SILENCE_FRAMES = 5
+VOICE_FRAMES = 5
 
 VOICE = "Cherry"
 LANGUAGE = "Chinese"
@@ -120,9 +120,10 @@ def calculate_rms(chunk):
 
 
 def detect_voice_in_chunk(chunk):
-    """检测chunk是否有语音"""
+    """检测chunk是否有语音，返回 (rms值, 是否有语音)"""
     rms = calculate_rms(chunk)
-    return rms > vad_threshold
+    has_voice = rms > vad_threshold
+    return rms, has_voice
 
 
 def collect_audio(mic):
@@ -139,12 +140,13 @@ def collect_audio(mic):
         chunk = bytearray(chunk_size)
         mic.readinto(chunk)
 
-        has_voice = detect_voice_in_chunk(chunk)
+        rms, has_voice = detect_voice_in_chunk(chunk)
 
         if not recording:
             voice_buffer.append(chunk)
             if has_voice:
                 voice_count += 1
+                print(f"[VAD] 检测到语音: 能量={rms:.2f}, 阈值={vad_threshold:.2f}")
             else:
                 voice_count = 0
                 voice_buffer = []
