@@ -98,7 +98,7 @@ def calculate_vad_threshold(mic, seconds):
 
     print(f"[VAD] 环境噪音统计: 平均={avg_rms:.2f}, 最大={max_rms:.2f}, 最小={min_rms:.2f}")
 
-    threshold = avg_rms * 2
+    threshold = avg_rms * 1.5
     print(f"[VAD] 设定阈值: {threshold:.2f} (平均值的2倍)")
 
     return threshold
@@ -311,91 +311,139 @@ def parse_sse_line(line_str):
         return None
 
 
-def handle_chunk_data(chunk_data):
-    """处理单个音频块数据"""
-    if "output" not in chunk_data:
-        return None, False
+def handle_chunk_data(chunk, count):
+    """处理单个音频块并实时播放"""
 
-    if chunk_data["output"].get("finish_reason") == "stop":
-        return None, True
+    if "output" not in chunk:
+        return count, False
 
-    audio_info = chunk_data["output"].get("audio", {})
+    if chunk["output"].get("finish_reason") == "stop":
+        return count, True
+
+    audio_info = chunk["output"].get("audio", {})
     if "data" in audio_info:
-        # 解码base64音频数据
+        # 解码音频数据
         audio_bytes = ubinascii.a2b_base64(audio_info["data"])
-        return audio_bytes, False
 
-    return None, False
+        # 添加到播放缓冲区
+        with buffer_lock:
+            audio_buffer.append(audio_bytes)
+        count += 1
+        print(f"[HTTP] base64的数据长度{len(audio_info['data'])} 解码后二进制数据长度{len(audio_bytes)} 缓冲区大小{len(audio_buffer)} ")
+    return count, False
 
 
 def stream_tts_response(sock):
-    """流式处理TTS响应，边接收边解析边放入播放缓冲区"""
+    """流式处理chunked数据：边接收、边解析、边播放"""
+    # 用于缓存未解析完成的SSE行
     sse_buffer = ""
-    chunk_count = 0
+    count = 0
     is_done = False
 
-    print("[TTS] 开始流式处理响应...")
+    print("[HTTP] 开始流式处理chunked数据...")
 
     while not is_done:
-        # 读取数据块
-        chunk = sock.read(1024)
-        if not chunk:
-            print("[TTS] 连接中断，结束流式处理")
+        # 1. 读取chunk大小行
+        size_line = b""
+        empty_read_count = 0
+        max_empty_reads = 20  # 最大连续空读取次数（大约400ms）
+        while b'\r\n' not in size_line:
+            chunk = sock.read(1)
+            if not chunk:
+                empty_read_count += 1
+                print(f"[HTTP] 中断{empty_read_count}次 {chunk}")
+                if empty_read_count > max_empty_reads:
+                    print(f"[HTTP] 连续{max_empty_reads}次读取为空，连接可能已断开")
+                    return count
+                # 短暂等待数据到达
+                time.sleep_ms(20)  # 20毫秒，足够网络数据到达
+                continue
+
+            empty_read_count = 0
+            size_line += chunk
+
+        # 2. 解析chunk大小（十六进制）
+        chunk_size_str = size_line.split(b'\r\n')[0].strip()
+        if not chunk_size_str:
+            continue
+
+        try:
+            chunk_size = int(chunk_size_str, 16)
+        except:
+            print(f"[HTTP] chunk大小解析失败: {chunk_size_str}")
+            continue
+
+        # 3. chunk大小为0表示结束
+        if chunk_size == 0:
+            print("[HTTP] 收到结束chunk (size=0)")
             break
 
-        # 将数据追加到SSE缓冲区
-        chunk_str = chunk.decode('utf-8', 'ignore')
-        sse_buffer += chunk_str
-
-        # 解析缓冲区中的完整行
-        while '\n' in sse_buffer:
-            line_end = sse_buffer.find('\n')
-            line = sse_buffer[:line_end]
-            sse_buffer = sse_buffer[line_end + 1:]
-
-            line = line.strip()
-            if not line:
-                continue
-
-            # 解析SSE行
-            parsed_line = parse_sse_line(line)
-            if not parsed_line:
-                continue
-
-            if parsed_line["type"] == "done":
-                print("[TTS] 收到[DONE]信号")
-                is_done = True
+        # 4. 边读取边解析，避免阻塞播放线程
+        received = 0
+        while received < chunk_size:
+            # 每次只读取一小块数据，避免长时间阻塞
+            to_read = min(1024, chunk_size - received)
+            data = sock.read(to_read)
+            if not data:
                 break
 
-            if parsed_line["type"] == "data":
-                audio_bytes, chunk_done = handle_chunk_data(parsed_line["data"])
-                if audio_bytes:
-                    # 将音频数据放入播放缓冲区
-                    with buffer_lock:
-                        audio_buffer.append(audio_bytes)
-                    chunk_count += 1
-                    # print(f"[TTS] 解码音频块{chunk_count} 大小: {len(audio_bytes)}字节")
+            # 5. 立即将读取的数据追加到SSE缓冲区并解码
+            chunk_data_str = data.decode('utf-8', 'ignore')
+            sse_buffer += chunk_data_str
+            received += len(data)
 
-                if chunk_done:
-                    print("[TTS] 收到完成信号")
+            # 6. 立即解析缓冲区中的完整行，边解析边放入播放buffer
+            while '\n' in sse_buffer:
+                # 提取第一行
+                line_end = sse_buffer.find('\n')
+                line = sse_buffer[:line_end]
+                sse_buffer = sse_buffer[line_end + 1:]
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                # 解析SSE行
+                parsed_line = parse_sse_line(line)
+                if not parsed_line:
+                    continue
+
+                if parsed_line["type"] == "done":
+                    print("[SSE] 收到[DONE]信号")
                     is_done = True
                     break
 
-        # 如果收到完成信号，退出循环
+                if parsed_line["type"] == "data":
+                    count, is_done = handle_chunk_data(parsed_line["data"], count)
+                    if is_done:
+                        print("[SSE] 收到完成信号")
+                        break
+
+            # 如果收到完成信号，提前结束读取
+            if is_done:
+                # 读取剩余的chunk数据以保持HTTP协议正确性
+                remaining = chunk_size - received
+                if remaining > 0:
+                    sock.read(remaining)
+                    received = chunk_size
+                break
+
+        # print(f"[HTTP] 接收chunk: 大小={chunk_size}, 实际={received}")
+
+        # 7. 读取chunk结尾的\r\n
+        sock.read(2)  # 读取\r\n
+
+        # 如果已完成，退出循环
         if is_done:
             break
 
-    # 处理缓冲区中剩余的数据
+    # 处理缓冲区中剩余的最后一行数据
     if sse_buffer.strip():
         parsed_line = parse_sse_line(sse_buffer.strip())
         if parsed_line and parsed_line["type"] == "data":
-            audio_bytes, _ = handle_chunk_data(parsed_line["data"])
-            if audio_bytes:
-                with buffer_lock:
-                    audio_buffer.append(audio_bytes)
-                chunk_count += 1
+            count, _ = handle_chunk_data(parsed_line["data"], count)
 
-    return chunk_count
+    return count
 
 
 def tts_api_call(text):
@@ -409,13 +457,6 @@ def tts_api_call(text):
         audio_buffer = []
     tts_receiving_complete = False
 
-    # 构建TTS请求
-    payload_dict = {
-        "model": "qwen3-tts-flash",
-        "input": {"text": text},
-        "parameters": {"voice": VOICE, "language_type": LANGUAGE}
-    }
-    payload = json.dumps(payload_dict).encode('utf-8')
 
     # 建立SSL连接
     addr_info = socket.getaddrinfo(API_HOST, 443)[0]
@@ -425,7 +466,17 @@ def tts_api_call(text):
     sock.connect(addr_info[-1])
 
     import ssl
+
     sock = ssl.wrap_socket(sock, server_hostname=API_HOST)
+    print("[API] SSL连接建立成功")
+
+    # 构建TTS请求
+    payload_dict = {
+        "model": "qwen3-tts-flash",
+        "input": {"text": text},
+        "parameters": {"voice": VOICE, "language_type": LANGUAGE}
+    }
+    payload_bytes = json.dumps(payload_dict).encode('utf-8')
 
     # 发送请求
     request_headers = (
@@ -434,12 +485,12 @@ def tts_api_call(text):
         f"Authorization: Bearer {API_KEY}\r\n"
         f"Content-Type: application/json\r\n"
         f"X-DashScope-SSE: enable\r\n"
-        f"Content-Length: {len(payload)}\r\n"
+        f"Content-Length: {len(payload_bytes)}\r\n"
         f"Connection: close\r\n\r\n"
     )
 
     sock.write(request_headers.encode('utf-8'))
-    sock.write(payload)
+    sock.write(payload_bytes)
     print(f"[TTS] 请求已发送，文本长度: {len(text)}")
 
     # 接收HTTP响应头部
@@ -450,34 +501,32 @@ def tts_api_call(text):
         if not chunk:
             print("[TTS] 连接中断")
             sock.close()
+            Pin(21, Pin.OUT).value(0)
             return False
         headers += chunk
 
     header_text = headers.decode('utf-8')
+    print(f"[HTTP] 头部接收完成 ({len(headers)} 字节)")
 
     # 检查HTTP状态码
     if "200 OK" not in header_text:
         print(f"[TTS] 错误响应: {header_text[:100]}")
         sock.close()
+        Pin(21, Pin.OUT).value(0)
         return False
 
-    # 流式处理响应体
-    total_chunks = stream_tts_response(sock)
+    # 流式处理数据（核心修改点）
+    total_count = 0
+    if "transfer-encoding: chunked" in header_text.lower():
+        print("[HTTP] 检测到chunked编码，开始流式处理...")
+        # 流式处理chunked数据，边接收边播放
+        total_count = stream_tts_response(sock)
 
-    print(f"[TTS] 共接收 {total_chunks} 个音频块")
+    print(f"共接收了 {total_count} 个音频块")
 
-    # 标记接收完成
-    tts_receiving_complete = True
-
-    # 等待缓冲区播放完毕
-    while True:
-        with buffer_lock:
-            buffer_empty = len(audio_buffer) == 0
-            if tts_receiving_complete and buffer_empty:
-                break
-        time.sleep(0.05)
-
-    sock.close()
+    global  receiving_complete
+    with buffer_lock:
+        receiving_complete = True
     print("[TTS] 播放完成")
 
     return True
