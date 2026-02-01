@@ -15,7 +15,7 @@ MODEL_NAME = "qwen3-asr-flash"
 API_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 
 SAMPLE_RATE = 16000
-COLLECT_SECONDS = 5  # 采集2秒
+COLLECT_SECONDS = 2  # 采集5秒
 
 # 引脚
 mic = I2S(0, sck=Pin(12), ws=Pin(13), sd=Pin(14),
@@ -23,92 +23,352 @@ mic = I2S(0, sck=Pin(12), ws=Pin(13), sd=Pin(14),
           rate=SAMPLE_RATE, ibuf=40000)
 
 
+# --- 网络延迟检测函数 ---
+def measure_network_latency():
+    """全面测量网络延迟"""
+    print(f"\n[{time.time():.3f}] === 开始网络延迟检测 ===")
+
+    test_servers = [
+        ("DNS服务器", "8.8.8.8", 53),  # Google DNS
+        ("阿里云DNS", "223.5.5.5", 53),  # 阿里云DNS
+        ("百度", "www.baidu.com", 80),
+        ("阿里云API", "dashscope.aliyuncs.com", 443),
+    ]
+
+    gc.collect()  # 垃圾回收，确保内存干净
+
+    for server_name, host, port in test_servers:
+        print(f"\n[{time.time():.3f}] 测试 {server_name} ({host}:{port})...")
+
+        try:
+            # 1. DNS解析延迟（如果是域名）
+            if not host.replace('.', '').isdigit():  # 如果是域名而不是IP
+                dns_start = time.time()
+                try:
+                    addr_info = socket.getaddrinfo(host, port)
+                    dns_end = time.time()
+                    ip_address = addr_info[0][4][0]
+                    print(f"[{time.time():.3f}]   DNS解析: {dns_end - dns_start:.3f}秒 -> {ip_address}")
+                    host = ip_address  # 使用解析后的IP进行ping测试
+                except Exception as e:
+                    print(f"[{time.time():.3f}]   ❌ DNS解析失败: {e}")
+                    continue
+
+            # 2. TCP连接延迟（类似ping）
+            ping_results = []
+            for i in range(3):  # ping 3次
+                try:
+                    sock = socket.socket()
+                    sock.settimeout(3)  # 3秒超时
+
+                    connect_start = time.time()
+                    sock.connect((host, port))
+                    connect_end = time.time()
+
+                    latency = (connect_end - connect_start) * 1000  # 转换为毫秒
+                    ping_results.append(latency)
+
+                    sock.close()
+
+                    print(f"[{time.time():.3f}]   Ping {i + 1}: {latency:.1f}ms")
+                    time.sleep(0.5)  # 间隔0.5秒
+
+                except Exception as e:
+                    print(f"[{time.time():.3f}]   Ping {i + 1}失败: {e}")
+                    break
+                finally:
+                    if 'sock' in locals():
+                        try:
+                            sock.close()
+                        except:
+                            pass
+
+            # 3. 计算统计
+            if ping_results:
+                avg_latency = sum(ping_results) / len(ping_results)
+                min_latency = min(ping_results)
+                max_latency = max(ping_results)
+                jitter = max_latency - min_latency  # 抖动
+
+                print(f"[{time.time():.3f}]   📊 统计:")
+                print(f"[{time.time():.3f}]     平均延迟: {avg_latency:.1f}ms")
+                print(f"[{time.time():.3f}]     最小延迟: {min_latency:.1f}ms")
+                print(f"[{time.time():.3f}]     最大延迟: {max_latency:.1f}ms")
+                print(f"[{time.time():.3f}]     抖动: {jitter:.1f}ms")
+
+                # 延迟评级
+                if avg_latency < 50:
+                    rating = "优秀 🚀"
+                elif avg_latency < 100:
+                    rating = "良好 👍"
+                elif avg_latency < 200:
+                    rating = "一般 ⚠️"
+                elif avg_latency < 500:
+                    rating = "较差 🐌"
+                else:
+                    rating = "很差 ❌"
+
+                print(f"[{time.time():.3f}]     评级: {rating}")
+
+            # 4. 针对API服务器的额外测试
+            if server_name == "阿里云API":
+                print(f"\n[{time.time():.3f}]   执行API服务器额外测试...")
+
+                # 测试HTTPS连接建立时间
+                try:
+                    sock = socket.socket()
+                    sock.settimeout(5)
+
+                    # TCP握手时间
+                    tcp_start = time.time()
+                    sock.connect((host, port))
+                    tcp_end = time.time()
+
+                    # TLS握手模拟（发送HTTPS请求头）
+                    ssl_start = time.time()
+                    sock.send(b"GET / HTTP/1.1\r\nHost: dashscope.aliyuncs.com\r\n\r\n")
+
+                    # 读取一点响应来判断连接是否正常
+                    sock.settimeout(2)
+                    try:
+                        response = sock.recv(100)
+                    except:
+                        response = b""
+
+                    ssl_end = time.time()
+
+                    print(f"[{time.time():.3f}]     TCP握手: {(tcp_end - tcp_start) * 1000:.1f}ms")
+                    print(f"[{time.time():.3f}]     SSL/TLS握手: {(ssl_end - ssl_start) * 1000:.1f}ms")
+                    print(f"[{time.time():.3f}]     总连接建立: {(ssl_end - tcp_start) * 1000:.1f}ms")
+
+                    if b"HTTP" in response or b"TLS" in response or b"SSL" in response:
+                        print(f"[{time.time():.3f}]     服务器响应: 正常")
+                    else:
+                        print(f"[{time.time():.3f}]     服务器响应: 异常或无响应")
+
+                    sock.close()
+
+                except Exception as e:
+                    print(f"[{time.time():.3f}]     API服务器测试失败: {e}")
+
+        except Exception as e:
+            print(f"[{time.time():.3f}]   ❌ {server_name}测试失败: {e}")
+
+        time.sleep(1)  # 测试间隔
+
+    print(f"\n[{time.time():.3f}] === 网络延迟检测完成 ===")
+    gc.collect()
+
+
+# --- 网络速度测试函数 ---
+def measure_network_speed():
+    """简单网络速度测试"""
+    print(f"\n[{time.time():.3f}] === 开始网络速度测试 ===")
+
+    test_urls = [
+        ("小型测试", "http://httpbin.org/bytes/1024"),  # 1KB
+        ("中型测试", "http://httpbin.org/bytes/10240"),  # 10KB
+    ]
+
+    for test_name, url in test_urls:
+        print(f"\n[{time.time():.3f}] {test_name} ({url})...")
+
+        try:
+            # 先解析域名
+            domain = url.split('/')[2]
+            dns_start = time.time()
+            addr_info = socket.getaddrinfo(domain, 80)
+            dns_time = time.time() - dns_start
+
+            start_time = time.time()
+            response = requests.get(url, timeout=10)
+            end_time = time.time()
+
+            if response.status_code == 200:
+                data_size = len(response.content)
+                total_time = end_time - start_time
+                speed_kbps = (data_size * 8) / total_time / 1024  # Kbps
+                speed_mbps = speed_kbps / 1024  # Mbps
+
+                print(f"[{time.time():.3f}]   ✅ 下载成功")
+                print(f"[{time.time():.3f}]   数据大小: {data_size} 字节")
+                print(f"[{time.time():.3f}]   DNS时间: {dns_time:.3f}秒")
+                print(f"[{time.time():.3f}]   下载时间: {total_time:.3f}秒")
+                print(f"[{time.time():.3f}]   下载速度: {speed_kbps:.2f} Kbps ({speed_mbps:.2f} Mbps)")
+
+                # 速度评级
+                if speed_mbps > 10:
+                    rating = "极快 🚀"
+                elif speed_mbps > 5:
+                    rating = "快速 ⚡"
+                elif speed_mbps > 2:
+                    rating = "一般 👍"
+                elif speed_mbps > 0.5:
+                    rating = "较慢 🐌"
+                else:
+                    rating = "很慢 ❌"
+
+                print(f"[{time.time():.3f}]   评级: {rating}")
+
+            else:
+                print(f"[{time.time():.3f}]   ❌ 下载失败: {response.status_code}")
+
+        except Exception as e:
+            print(f"[{time.time():.3f}]   ❌ {test_name}测试失败: {e}")
+
+        time.sleep(2)
+
+    print(f"\n[{time.time():.3f}] === 网络速度测试完成 ===")
+
+
 # --- 网络状态检查函数 ---
 def check_network_status():
-    """检查网络状态，包括AP模式"""
-    print("=== 网络状态检查 ===")
+    """检查网络状态，包括AP模式和WiFi连接"""
+    start_time = time.time()
+    print(f"\n[{start_time:.3f}] === 网络状态检查 ===")
 
     # 检查AP模式
     ap = network.WLAN(network.AP_IF)
     ap_active = ap.active()
-    print(f"AP模式状态: {'开启' if ap_active else '关闭'}")
+    print(f"[{time.time():.3f}] AP模式状态: {'开启' if ap_active else '关闭'}")
     if ap_active:
-        print("⚠️ 警告: AP模式已开启，正在关闭以节省资源")
+        print(f"[{time.time():.3f}] ⚠️ 警告: AP模式已开启，建议关闭以节省资源")
         ap.active(False)
-        print("已关闭AP模式")
+        print(f"[{time.time():.3f}] 已关闭AP模式")
 
     # 检查STA模式
     sta = network.WLAN(network.STA_IF)
     sta_active = sta.active()
-    print(f"STA模式状态: {'开启' if sta_active else '关闭'}")
+    print(f"[{time.time():.3f}] STA模式状态: {'开启' if sta_active else '关闭'}")
 
     if sta.isconnected():
-        print("WiFi连接状态: 已连接")
+        print(f"[{time.time():.3f}] WiFi连接状态: 已连接")
         config = sta.ifconfig()
-        print(f"IP地址: {config[0]}")
-    else:
-        print("WiFi连接状态: 未连接")
+        print(f"[{time.time():.3f}] IP地址: {config[0]}")
+        print(f"[{time.time():.3f}] 子网掩码: {config[1]}")
+        print(f"[{time.time():.3f}] 网关: {config[2]}")
+        print(f"[{time.time():.3f}] DNS: {config[3]}")
 
-    print("=== 网络检查结束 ===\n")
+        # 信号强度
+        try:
+            # 不同版本的MicroPython获取信号强度的方法不同
+            if hasattr(sta, 'status'):
+                # 尝试获取RSSI
+                try:
+                    rssi = sta.status('rssi')
+                    print(f"[{time.time():.3f}] 信号强度: {rssi} dBm")
+
+                    # 信号质量评级
+                    if rssi >= -50:
+                        quality = "优秀 📶📶📶"
+                    elif rssi >= -60:
+                        quality = "良好 📶📶"
+                    elif rssi >= -70:
+                        quality = "一般 📶"
+                    elif rssi >= -80:
+                        quality = "较差 📡"
+                    else:
+                        quality = "很差 ❌"
+
+                    print(f"[{time.time():.3f}] 信号质量: {quality}")
+                except:
+                    # 如果status方法不支持参数
+                    status_info = sta.status()
+                    print(f"[{time.time():.3f}] 连接状态: {status_info}")
+        except Exception as e:
+            print(f"[{time.time():.3f}] 信号强度: 无法获取 ({e})")
+    else:
+        print(f"[{time.time():.3f}] WiFi连接状态: 未连接")
+
+    end_time = time.time()
+    print(f"[{end_time:.3f}] 网络检查总耗时: {end_time - start_time:.3f}秒")
+    print(f"[{end_time:.3f}] === 网络检查结束 ===\n")
+
     return sta.isconnected()
 
 
 # --- 核心函数 ---
 def connect_wifi():
-    print("开始连接Wi-Fi...")
+    start_time = time.time()
+    print(f"[{start_time:.3f}] 开始连接Wi-Fi...")
 
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
 
     # 先检查是否已连接
     if wlan.isconnected():
-        print(f"✅ 已连接Wi-Fi，IP: {wlan.ifconfig()[0]}")
+        end_time = time.time()
+        print(f"[{end_time:.3f}] ✅ 已连接Wi-Fi，IP: {wlan.ifconfig()[0]}")
         return True
 
     # 连接Wi-Fi
+    connect_start = time.time()
     wlan.connect(WIFI_SSID, WIFI_PASSWORD)
-    print(f"正在连接到 {WIFI_SSID}...")
+    print(f"[{time.time():.3f}]   正在连接到 {WIFI_SSID}...")
 
-    for i in range(30):  # 30次尝试
+    for i in range(30):  # 增加到30次尝试
         if wlan.isconnected():
-            print("✅ Wi-Fi连接成功")
-            print(f"IP地址: {wlan.ifconfig()[0]}")
+            connect_end = time.time()
+            end_time = time.time()
+            print(f"[{end_time:.3f}] ✅ Wi-Fi连接成功")
+            print(f"[{end_time:.3f}]   连接耗时: {connect_end - connect_start:.2f}秒")
+            print(f"[{end_time:.3f}]   IP地址: {wlan.ifconfig()[0]}")
+
             return True
 
+        # 显示连接状态
+        status = wlan.status()
         if i % 5 == 0:  # 每5次打印一次状态
-            print(f"连接状态: 尝试 {i + 1}/30")
+            status_map = {
+                1000: "未连接",
+                1001: "连接中",
+                1010: "已连接",
+                202: "密码错误",
+                201: "未找到AP",
+            }
+            status_text = status_map.get(status, f"未知({status})")
+            print(f"[{time.time():.3f}]   连接状态: {status_text} (尝试 {i + 1}/30)")
+
         time.sleep(0.5)
 
-    print("❌ Wi-Fi连接失败")
+    end_time = time.time()
+    print(f"[{end_time:.3f}] ❌ Wi-Fi连接失败，总耗时: {end_time - start_time:.2f}秒")
     return False
 
 
-def collect_audio():
-    """采集音频"""
-    print(f"🎤 开始采集{COLLECT_SECONDS}秒音频...")
-
+def collect_5s_audio():
+    """采集5秒音频（441模块格式）"""
     start_time = time.time()
+    print(f"[{start_time:.3f}] 🎤 开始采集{COLLECT_SECONDS}秒音频...")
 
-    # 计算需要的数据量
+    # 计算需要的数据量：5秒 × 16000样本/秒 × 4字节/样本
     total_bytes = COLLECT_SECONDS * SAMPLE_RATE * 4
-    chunk_size = 3200
+    chunk_size = 3200  # 每次读0.05秒数据
     collected = bytearray()
 
+    progress_start = time.time()
     while len(collected) < total_bytes:
         chunk = bytearray(chunk_size)
+        chunk_start = time.time()
         mic.readinto(chunk)
         collected.extend(chunk)
 
+        # 显示进度
+        progress = len(collected) / total_bytes * 100
+        if time.time() - progress_start >= 1:
+            current_time = time.time()
+            print(f"[{current_time:.3f}]   进度: {progress:.0f}%")
+            progress_start = time.time()
+
     end_time = time.time()
-    print(f"✅ 采集完成: {len(collected)} 字节，耗时: {end_time - start_time:.2f}秒")
+    print(f"[{end_time:.3f}] ✅ 采集完成: {len(collected)} 字节，耗时: {end_time - start_time:.2f}秒")
     return collected
 
 
 def create_wav_441(audio_data):
     """为441模块音频创建WAV"""
-    print("🎵 开始创建WAV文件...")
-
     start_time = time.time()
+    print(f"[{start_time:.3f}] 🎵 开始创建WAV文件...")
 
     # WAV头 (32位, 16000Hz, 单声道)
     datasize = len(audio_data)
@@ -128,23 +388,30 @@ def create_wav_441(audio_data):
     wav.extend(audio_data)
 
     end_time = time.time()
-    print(f"✅ WAV文件创建完成，大小: {len(wav)} 字节，耗时: {end_time - start_time:.2f}秒")
+    print(f"[{end_time:.3f}] ✅ WAV文件创建完成，大小: {len(wav)} 字节，耗时: {end_time - start_time:.2f}秒")
     return wav
 
 
-def call_api(wav_data):
-    """调用API"""
-    print("开始API调用...")
+def call_api_with_detailed_timing(wav_data):
+    """调用API，包含详细的耗时分析"""
     total_start = time.time()
+    print(f"\n[{total_start:.3f}] ========== 开始API调用 ==========")
 
     # 1. Base64编码
     encode_start = time.time()
+    print(f"[{encode_start:.3f}] 1. Base64编码开始...")
     audio_b64 = ubinascii.b2a_base64(wav_data)[:-1].decode('utf-8')
-    encode_time = time.time() - encode_start
-    print(f"Base64编码耗时: {encode_time:.3f}秒")
+    encode_end = time.time()
+    encode_time = encode_end - encode_start
+    print(f"[{encode_end:.3f}]   ✅ Base64编码完成，数据长度: {len(audio_b64)} 字符")
+    print(f"[{encode_end:.3f}]   编码耗时: {encode_time:.3f}秒")
 
-    # 2. 构建请求数据
+    # 2. 构建请求数据（使用字符串拼接代替json.dumps）
     build_start = time.time()
+    print(f"[{build_start:.3f}] 2. 构建请求数据...")
+
+    # 直接构建JSON字符串，避免使用json.dumps的序列化耗时
+    json_start = time.time()
     json_data = f'''{{
     "model": "{MODEL_NAME}",
     "input": {{
@@ -164,196 +431,659 @@ def call_api(wav_data):
         "language": "zh-CN"
     }}
 }}'''
+    json_end = time.time()
 
     headers = {
         'Authorization': f'Bearer {API_KEY}',
         'Content-Type': 'application/json'
     }
-    build_time = time.time() - build_start
-    print(f"请求构建耗时: {build_time:.3f}秒")
 
-    # 3. 发送HTTP请求
-    request_start = time.time()
+    build_end = time.time()
+    build_time = build_end - build_start
+    json_time = json_end - json_start
+
+    print(f"[{build_end:.3f}]   ✅ 请求数据构建完成")
+    print(f"[{build_end:.3f}]   JSON大小: {len(json_data)} 字节")
+    print(f"[{build_end:.3f}]   JSON构建耗时: {json_time:.3f}秒")
+    print(f"[{build_end:.3f}]   总构建耗时: {build_time:.3f}秒")
+    print(f"[{build_end:.3f}]   使用字符串拼接替代json.dumps()")
+
+    # 3. DNS解析
+    dns_start = time.time()
+    print(f"[{dns_start:.3f}] 3. DNS解析开始...")
     try:
+        # 解析域名
+        domain = "dashscope.aliyuncs.com"
+        dns_resolve_start = time.time()
+        addr_info = socket.getaddrinfo(domain, 443)
+        dns_resolve_end = time.time()
+        ip_address = addr_info[0][4][0]
+        dns_time = dns_resolve_end - dns_resolve_start
+        print(f"[{time.time():.3f}]   ✅ DNS解析成功")
+        print(f"[{time.time():.3f}]   域名: {domain} -> IP: {ip_address}")
+        print(f"[{time.time():.3f}]   DNS解析耗时: {dns_time:.3f}秒")
+    except Exception as e:
+        print(f"[{time.time():.3f}]   ❌ DNS解析失败: {e}")
+        return None
+
+    # 4. HTTP请求
+    request_start = time.time()
+    print(f"[{request_start:.3f}] 4. 发送HTTP请求...")
+
+    try:
+        # 发送请求
+        send_start = time.time()
         response = requests.post(API_URL, headers=headers, data=json_data, timeout=30)
-        request_time = time.time() - request_start
-        print(f"HTTP请求耗时: {request_time:.3f}秒")
-        print(f"状态码: {response.status_code}")
+        send_end = time.time()
+
+        request_time = send_end - send_start
+        print(f"[{send_end:.3f}]   ✅ HTTP响应接收完成")
+        print(f"[{send_end:.3f}]   状态码: {response.status_code}")
+        print(f"[{send_end:.3f}]   HTTP请求耗时: {request_time:.3f}秒")
+
+        # 检查响应大小
+        if hasattr(response, 'text'):
+            response_size = len(response.text)
+            print(f"[{time.time():.3f}]   响应大小: {response_size} 字节")
+
+        # 5. 解析响应
+        parse_start = time.time()
+        print(f"[{parse_start:.3f}] 5. 解析响应数据...")
 
         if response.status_code == 200:
-            # 解析响应
-            parse_start = time.time()
+            # 这里还是需要json解析响应
             result = response.json()
             text = result['output']['choices'][0]['message']['content'][0]['text']
-            parse_time = time.time() - parse_start
+            parse_end = time.time()
+            parse_time = parse_end - parse_start
 
-            total_time = time.time() - total_start
-            print(f"响应解析耗时: {parse_time:.3f}秒")
-            print(f"API调用总耗时: {total_time:.3f}秒")
-            print(f"识别结果: {text}")
+            print(f"[{parse_end:.3f}]   ✅ 响应解析成功")
+            print(f"[{parse_end:.3f}]   解析耗时: {parse_time:.3f}秒")
+
+            # 总耗时统计
+            total_end = time.time()
+            total_time = total_end - total_start
+
+            print(f"\n[{total_end:.3f}] ========== API调用完成 ==========")
+            print(f"[{total_end:.3f}] 识别结果: {text}")
+            print(f"[{total_end:.3f}] 各阶段耗时统计:")
+            print(f"[{total_end:.3f}]   Base64编码: {encode_time:.3f}秒 ({encode_time / total_time * 100:.1f}%)")
+            print(f"[{total_end:.3f}]   请求构建: {build_time:.3f}秒 ({build_time / total_time * 100:.1f}%)")
+            print(f"[{total_end:.3f}]   DNS解析: {dns_time:.3f}秒 ({dns_time / total_time * 100:.1f}%)")
+            print(f"[{total_end:.3f}]   HTTP请求: {request_time:.3f}秒 ({request_time / total_time * 100:.1f}%)")
+            print(f"[{total_end:.3f}]   响应解析: {parse_time:.3f}秒 ({parse_time / total_time * 100:.1f}%)")
+            print(f"[{total_end:.3f}]   总耗时: {total_time:.3f}秒")
+            print(f"[{total_end:.3f}] ================================\n")
 
             return text
         else:
-            print(f"❌ API返回错误: {response.status_code}")
+            print(f"[{time.time():.3f}]   ❌ API返回错误: {response.status_code}")
+            if hasattr(response, 'text'):
+                print(f"[{time.time():.3f}]   错误信息: {response.text[:200]}...")
             return None
 
     except Exception as e:
-        print(f"❌ HTTP请求失败: {e}")
+        error_time = time.time()
+        print(f"[{error_time:.3f}]   ❌ HTTP请求失败: {e}")
+        print(f"[{error_time:.3f}]   请求总耗时: {error_time - request_start:.3f}秒")
         return None
-
-
 # --- 主循环 ---
 def main():
-    print("====== 语音识别程序启动 ======")
+    total_start_time = time.time()
+    print(f"[{total_start_time:.3f}] ====== 语音识别程序启动 ======")
 
     # 连接Wi-Fi
     if not connect_wifi():
-        print("❌ Wi-Fi连接失败，程序退出")
+        print(f"[{time.time():.3f}] ❌ Wi-Fi连接失败，程序退出")
         return
 
     # 检查网络状态
     check_network_status()
 
+    # 测量网络延迟
+    measure_network_latency()
+
     # 内存状态
     gc.collect()
     free_mem = gc.mem_free()
     total_mem = gc.mem_alloc() + free_mem
-    print(f"内存状态:")
-    print(f"  总内存: {total_mem} 字节")
-    print(f"  空闲内存: {free_mem} 字节")
-    print(f"  使用率: {gc.mem_alloc() / total_mem * 100:.1f}%")
+    print(f"\n[{time.time():.3f}] 内存状态:")
+    print(f"[{time.time():.3f}]   总内存: {total_mem} 字节")
+    print(f"[{time.time():.3f}]   已用内存: {gc.mem_alloc()} 字节")
+    print(f"[{time.time():.3f}]   空闲内存: {free_mem} 字节")
+    print(f"[{time.time():.3f}]   使用率: {gc.mem_alloc() / total_mem * 100:.1f}%")
 
-    print(f"\n开始定时采集，每{COLLECT_SECONDS}秒一次\n")
+    print(f"\n[{time.time():.3f}] 开始定时采集，每{COLLECT_SECONDS}秒一次\n")
 
     cycle_count = 0
 
     while True:
         cycle_count += 1
         cycle_start_time = time.time()
-        print(f"\n====== 第{cycle_count}轮循环开始 ======")
+        print(f"\n[{cycle_start_time:.3f}] ====== 第{cycle_count}轮循环开始 ======")
 
         try:
-            # 1. 采集音频
+            # 1. 采集5秒音频
             audio_start = time.time()
-            raw_audio = collect_audio()
-            audio_time = time.time() - audio_start
+            raw_audio = collect_5s_audio()
+            audio_end = time.time()
+            audio_time = audio_end - audio_start
 
             # 2. 创建WAV
             wav_start = time.time()
             wav_data = create_wav_441(raw_audio)
-            wav_time = time.time() - wav_start
+            wav_end = time.time()
+            wav_time = wav_end - wav_start
 
-            # 3. 调用API
+            # 3. 调用API（使用详细版本）
             api_start = time.time()
-            result = call_api(wav_data)
-            api_time = time.time() - api_start
+            result = call_api_with_detailed_timing(wav_data)
+            api_end = time.time()
+            api_time = api_end - api_start
 
             # 4. 显示本轮统计
-            cycle_total_time = time.time() - cycle_start_time
-            print(f"\n====== 第{cycle_count}轮循环统计 ======")
-            print(f"  音频采集: {audio_time:.2f}秒")
-            print(f"  WAV创建: {wav_time:.2f}秒")
-            print(f"  API调用: {api_time:.2f}秒")
-            print(f"  循环总耗时: {cycle_total_time:.2f}秒")
-            print("===============================\n")
+            cycle_end_time = time.time()
+            cycle_total_time = cycle_end_time - cycle_start_time
+
+            print(f"\n[{cycle_end_time:.3f}] ====== 第{cycle_count}轮循环统计 ======")
+            print(f"[{cycle_end_time:.3f}]   音频采集: {audio_time:.2f}秒")
+            print(f"[{cycle_end_time:.3f}]   WAV创建: {wav_time:.2f}秒")
+            print(f"[{cycle_end_time:.3f}]   API调用: {api_time:.2f}秒")
+            print(f"[{cycle_end_time:.3f}]   循环总耗时: {cycle_total_time:.2f}秒")
+
+            # 计算各阶段占比
+            print(f"[{cycle_end_time:.3f}]   各阶段占比:")
+            print(f"[{cycle_end_time:.3f}]     音频采集: {audio_time / cycle_total_time * 100:.1f}%")
+            print(f"[{cycle_end_time:.3f}]     WAV创建: {wav_time / cycle_total_time * 100:.1f}%")
+            print(f"[{cycle_end_time:.3f}]     API调用: {api_time / cycle_total_time * 100:.1f}%")
+            print(f"[{cycle_end_time:.3f}] ===============================\n")
 
             # 5. 定期检查和内存清理
             if cycle_count % 3 == 0:  # 每3轮检查一次网络
                 gc.collect()
                 check_network_status()
 
-            print("等待下一轮...\n")
+            print(f"[{time.time():.3f}] 等待下一轮...\n")
 
         except KeyboardInterrupt:
-            print("\n====== 程序结束 ======")
-            print(f"完成循环数: {cycle_count}")
+            total_end_time = time.time()
+            print(f"\n[{total_end_time:.3f}] ====== 程序结束 ======")
+            print(f"[{total_end_time:.3f}] 运行总时长: {total_end_time - total_start_time:.2f}秒")
+            print(f"[{total_end_time:.3f}] 完成循环数: {cycle_count}")
             break
         except Exception as e:
-            print(f"错误: {e}")
+            error_time = time.time()
+            print(f"[{error_time:.3f}] 错误: {e}")
             time.sleep(1)
 
 
 if __name__ == "__main__":
     main()
 
-#
-#
 # >>> %Run -c $EDITOR_CONTENT
 #
 # MPY: soft reboot
-# ====== 语音识别程序启动 ======
-# 开始连接Wi-Fi...
-# ✅ 已连接Wi-Fi，IP: 192.168.1.23
-# === 网络状态检查 ===
-# AP模式状态: 关闭
-# STA模式状态: 开启
-# WiFi连接状态: 已连接
-# IP地址: 192.168.1.23
-# === 网络检查结束 ===
+# [821139900.000] ====== 语音识别程序启动 ======
+# [821139900.000] 开始连接Wi-Fi...
+# [821139900.000] ✅ 已连接Wi-Fi，IP: 192.168.1.23
 #
-# 内存状态:
-#   总内存: 8321536 字节
-#   空闲内存: 8311424 字节
-#   使用率: 0.1%
-#
-# 开始定时采集，每5秒一次
-#
-#
-# ====== 第1轮循环开始 ======
-# 🎤 开始采集5秒音频...
-# ✅ 采集完成: 320000 字节，耗时: 5.00秒
-# 🎵 开始创建WAV文件...
-# ✅ WAV文件创建完成，大小: 320044 字节，耗时: 0.00秒
-# 开始API调用...
-# Base64编码耗时: 0.000秒
-# 请求构建耗时: 1.000秒
-# HTTP请求耗时: 2.000秒
-# 状态码: 200
-# 响应解析耗时: 0.000秒
-# API调用总耗时: 3.000秒
-# 识别结果: 下官不是怕嘛？哎，那什么，您请坐呀，坐。
-#
-# ====== 第1轮循环统计 ======
-#   音频采集: 5.00秒
-#   WAV创建: 0.00秒
-#   API调用: 3.00秒
-#   循环总耗时: 8.00秒
-# ===============================
-#
-# 等待下一轮...
+# [821139900.000] === 网络状态检查 ===
+# [821139900.000] AP模式状态: 关闭
+# [821139900.000] STA模式状态: 开启
+# [821139900.000] WiFi连接状态: 已连接
+# [821139900.000] IP地址: 192.168.1.23
+# [821139900.000] 子网掩码: 255.255.255.0
+# [821139900.000] 网关: 192.168.1.1
+# [821139900.000] DNS: 192.168.1.1
+# [821139900.000] 信号强度: -42 dBm
+# [821139900.000] 信号质量: 优秀 📶📶📶
+# [821139900.000] 网络检查总耗时: 0.000秒
+# [821139900.000] === 网络检查结束 ===
 #
 #
-# ====== 第2轮循环开始 ======
-# 🎤 开始采集5秒音频...
-# ✅ 采集完成: 320000 字节，耗时: 5.00秒
-# 🎵 开始创建WAV文件...
-# ✅ WAV文件创建完成，大小: 320044 字节，耗时: 0.00秒
-# 开始API调用...
-# Base64编码耗时: 0.000秒
-# 请求构建耗时: 1.000秒
-# HTTP请求耗时: 2.000秒
-# 状态码: 200
-# 响应解析耗时: 0.000秒
-# API调用总耗时: 3.000秒
-# 识别结果: 刑部大人，本官要的名单。
+# [821139900.000] === 开始网络延迟检测 ===
 #
-# ====== 第2轮循环统计 ======
-#   音频采集: 5.00秒
-#   WAV创建: 0.00秒
-#   API调用: 3.00秒
-#   循环总耗时: 8.00秒
-# ===============================
+# [821139900.000] 测试 DNS服务器 (8.8.8.8:53)...
+# [821139900.000]   Ping 1: 0.0ms
+# [821139900.000]   Ping 2: 0.0ms
+# [821139900.000]   Ping 3: 0.0ms
+# [821139900.000]   📊 统计:
+# [821139900.000]     平均延迟: 0.0ms
+# [821139900.000]     最小延迟: 0.0ms
+# [821139900.000]     最大延迟: 0.0ms
+# [821139900.000]     抖动: 0.0ms
+# [821139900.000]     评级: 优秀 🚀
 #
-# 等待下一轮...
+# [821139900.000] 测试 阿里云DNS (223.5.5.5:53)...
+# [821139900.000]   Ping 1: 0.0ms
+# [821139900.000]   Ping 2: 0.0ms
+# [821139900.000]   Ping 3: 0.0ms
+# [821139900.000]   📊 统计:
+# [821139900.000]     平均延迟: 0.0ms
+# [821139900.000]     最小延迟: 0.0ms
+# [821139900.000]     最大延迟: 0.0ms
+# [821139900.000]     抖动: 0.0ms
+# [821139900.000]     评级: 优秀 🚀
+#
+# [821139900.000] 测试 百度 (www.baidu.com:80)...
+# [821139900.000]   DNS解析: 0.000秒 -> 39.156.70.239
+# [821139900.000]   Ping 1: 0.0ms
+# [821139900.000]   Ping 2: 0.0ms
+# [821139900.000]   Ping 3: 0.0ms
+# [821139900.000]   📊 统计:
+# [821139900.000]     平均延迟: 0.0ms
+# [821139900.000]     最小延迟: 0.0ms
+# [821139900.000]     最大延迟: 0.0ms
+# [821139900.000]     抖动: 0.0ms
+# [821139900.000]     评级: 优秀 🚀
+#
+# [821139900.000] 测试 阿里云API (dashscope.aliyuncs.com:443)...
+# [821139900.000]   DNS解析: 0.000秒 -> 8.152.159.24
+# [821139900.000]   Ping 1: 0.0ms
+# [821139900.000]   Ping 2: 0.0ms
+# [821139900.000]   Ping 3: 0.0ms
+# [821139900.000]   📊 统计:
+# [821139900.000]     平均延迟: 0.0ms
+# [821139900.000]     最小延迟: 0.0ms
+# [821139900.000]     最大延迟: 0.0ms
+# [821139900.000]     抖动: 0.0ms
+# [821139900.000]     评级: 优秀 🚀
+#
+# [821139900.000]   执行API服务器额外测试...
+# [821139900.000]     TCP握手: 0.0ms
+# [821139900.000]     SSL/TLS握手: 0.0ms
+# [821139900.000]     总连接建立: 0.0ms
+# [821139900.000]     服务器响应: 异常或无响应
+#
+# [821139900.000] === 网络延迟检测完成 ===
+#
+# [821139900.000] 内存状态:
+# [821139900.000]   总内存: 8254464 字节
+# [821139900.000]   已用内存: 20912 字节
+# [821139900.000]   空闲内存: 8233792 字节
+# [821139900.000]   使用率: 0.3%
+#
+# [821139900.000] 开始定时采集，每2秒一次
 #
 #
-# ====== 第3轮循环开始 ======
-# 🎤 开始采集5秒音频...
+# [821139900.000] ====== 第1轮循环开始 ======
+# [821139900.000] 🎤 开始采集2秒音频...
+# [821139900.000]   进度: 20%
+# [821139900.000]   进度: 70%
+# [821139900.000] ✅ 采集完成: 128000 字节，耗时: 2.00秒
+# [821139900.000] 🎵 开始创建WAV文件...
+# [821139900.000] ✅ WAV文件创建完成，大小: 128044 字节，耗时: 0.00秒
+#
+# [821139900.000] ========== 开始API调用 ==========
+# [821139900.000] 1. Base64编码开始...
+# [821139900.000]   ✅ Base64编码完成，数据长度: 170728 字符
+# [821139900.000]   编码耗时: 0.000秒
+# [821139900.000] 2. 构建请求数据...
+# [821139900.000]   ✅ 请求数据构建完成
+# [821139900.000]   JSON大小: 171116 字节
+# [821139900.000]   JSON构建耗时: 0.000秒
+# [821139900.000]   总构建耗时: 0.000秒
+# [821139900.000]   使用字符串拼接替代json.dumps()
+# [821139900.000] 3. DNS解析开始...
+# [821139900.000]   ✅ DNS解析成功
+# [821139900.000]   域名: dashscope.aliyuncs.com -> IP: 8.152.159.24
+# [821139900.000]   DNS解析耗时: 0.000秒
+# [821139900.000] 4. 发送HTTP请求...
+# [821139900.000]   ✅ HTTP响应接收完成
+# [821139900.000]   状态码: 200
+# [821139900.000]   HTTP请求耗时: 2.000秒
+# [821139900.000]   响应大小: 435 字节
+# [821139900.000] 5. 解析响应数据...
+# [821139900.000]   ✅ 响应解析成功
+# [821139900.000]   解析耗时: 0.000秒
+#
+# [821139900.000] ========== API调用完成 ==========
+# [821139900.000] 识别结果: 他可是皇上派来。
+# [821139900.000] 各阶段耗时统计:
+# [821139900.000]   Base64编码: 0.000秒 (0.0%)
+# [821139900.000]   请求构建: 0.000秒 (0.0%)
+# [821139900.000]   DNS解析: 0.000秒 (0.0%)
+# [821139900.000]   HTTP请求: 2.000秒 (100.0%)
+# [821139900.000]   响应解析: 0.000秒 (0.0%)
+# [821139900.000]   总耗时: 2.000秒
+# [821139900.000] ================================
+#
+#
+# [821139900.000] ====== 第1轮循环统计 ======
+# [821139900.000]   音频采集: 2.00秒
+# [821139900.000]   WAV创建: 0.00秒
+# [821139900.000]   API调用: 2.00秒
+# [821139900.000]   循环总耗时: 4.00秒
+# [821139900.000]   各阶段占比:
+# [821139900.000]     音频采集: 50.0%
+# [821139900.000]     WAV创建: 0.0%
+# [821139900.000]     API调用: 50.0%
+# [821139900.000] ===============================
+#
+# [821139900.000] 等待下一轮...
+#
+#
+# [821139900.000] ====== 第2轮循环开始 ======
+# [821139900.000] 🎤 开始采集2秒音频...
+# [821139900.000]   进度: 40%
+# [821139900.000]   进度: 90%
+# [821139900.000] ✅ 采集完成: 128000 字节，耗时: 2.00秒
+# [821139900.000] 🎵 开始创建WAV文件...
+# [821139900.000] ✅ WAV文件创建完成，大小: 128044 字节，耗时: 0.00秒
+#
+# [821139900.000] ========== 开始API调用 ==========
+# [821139900.000] 1. Base64编码开始...
+# [821139900.000]   ✅ Base64编码完成，数据长度: 170728 字符
+# [821139900.000]   编码耗时: 0.000秒
+# [821139900.000] 2. 构建请求数据...
+# [821139900.000]   ✅ 请求数据构建完成
+# [821139900.000]   JSON大小: 171116 字节
+# [821139900.000]   JSON构建耗时: 0.000秒
+# [821139900.000]   总构建耗时: 0.000秒
+# [821139900.000]   使用字符串拼接替代json.dumps()
+# [821139900.000] 3. DNS解析开始...
+# [821139900.000]   ✅ DNS解析成功
+# [821139900.000]   域名: dashscope.aliyuncs.com -> IP: 8.152.159.24
+# [821139900.000]   DNS解析耗时: 0.000秒
+# [821139900.000] 4. 发送HTTP请求...
+# [821139900.000]   ✅ HTTP响应接收完成
+# [821139900.000]   状态码: 200
+# [821139900.000]   HTTP请求耗时: 1.000秒
+# [821139900.000]   响应大小: 431 字节
+# [821139900.000] 5. 解析响应数据...
+# [821139900.000]   ✅ 响应解析成功
+# [821139900.000]   解析耗时: 0.000秒
+#
+# [821139900.000] ========== API调用完成 ==========
+# [821139900.000] 识别结果: 万一他要是没了。
+# [821139900.000] 各阶段耗时统计:
+# [821139900.000]   Base64编码: 0.000秒 (0.0%)
+# [821139900.000]   请求构建: 0.000秒 (0.0%)
+# [821139900.000]   DNS解析: 0.000秒 (0.0%)
+# [821139900.000]   HTTP请求: 1.000秒 (100.0%)
+# [821139900.000]   响应解析: 0.000秒 (0.0%)
+# [821139900.000]   总耗时: 1.000秒
+# [821139900.000] ================================
+#
+#
+# [821139900.000] ====== 第2轮循环统计 ======
+# [821139900.000]   音频采集: 2.00秒
+# [821139900.000]   WAV创建: 0.00秒
+# [821139900.000]   API调用: 2.00秒
+# [821139900.000]   循环总耗时: 4.00秒
+# [821139900.000]   各阶段占比:
+# [821139900.000]     音频采集: 50.0%
+# [821139900.000]     WAV创建: 0.0%
+# [821139900.000]     API调用: 50.0%
+# [821139900.000] ===============================
+#
+# [821139900.000] 等待下一轮...
+#
+#
+# [821139900.000] ====== 第3轮循环开始 ======
+# [821139900.000] 🎤 开始采集2秒音频...
+# [821139900.000]   进度: 63%
+# [821139900.000] ✅ 采集完成: 128000 字节，耗时: 1.00秒
+# [821139900.000] 🎵 开始创建WAV文件...
+# [821139900.000] ✅ WAV文件创建完成，大小: 128044 字节，耗时: 0.00秒
+#
+# [821139900.000] ========== 开始API调用 ==========
+# [821139900.000] 1. Base64编码开始...
+# [821139900.000]   ✅ Base64编码完成，数据长度: 170728 字符
+# [821139900.000]   编码耗时: 0.000秒
+# [821139900.000] 2. 构建请求数据...
+# [821139900.000]   ✅ 请求数据构建完成
+# [821139900.000]   JSON大小: 171116 字节
+# [821139900.000]   JSON构建耗时: 0.000秒
+# [821139900.000]   总构建耗时: 0.000秒
+# [821139900.000]   使用字符串拼接替代json.dumps()
+# [821139900.000] 3. DNS解析开始...
+# [821139900.000]   ✅ DNS解析成功
+# [821139900.000]   域名: dashscope.aliyuncs.com -> IP: 8.152.159.24
+# [821139900.000]   DNS解析耗时: 0.000秒
+# [821139900.000] 4. 发送HTTP请求...
+# [821139900.000]   ✅ HTTP响应接收完成
+# [821139900.000]   状态码: 200
+# [821139900.000]   HTTP请求耗时: 1.000秒
+# [821139900.000]   响应大小: 432 字节
+# [821139900.000] 5. 解析响应数据...
+# [821139900.000]   ✅ 响应解析成功
+# [821139900.000]   解析耗时: 0.000秒
+#
+# [821139900.000] ========== API调用完成 ==========
+# [821139900.000] 识别结果: 那后宫那儿这。
+# [821139900.000] 各阶段耗时统计:
+# [821139900.000]   Base64编码: 0.000秒 (0.0%)
+# [821139900.000]   请求构建: 0.000秒 (0.0%)
+# [821139900.000]   DNS解析: 0.000秒 (0.0%)
+# [821139900.000]   HTTP请求: 1.000秒 (50.0%)
+# [821139900.000]   响应解析: 0.000秒 (0.0%)
+# [821139900.000]   总耗时: 2.000秒
+# [821139900.000] ================================
+#
+#
+# [821139900.000] ====== 第3轮循环统计 ======
+# [821139900.000]   音频采集: 1.00秒
+# [821139900.000]   WAV创建: 0.00秒
+# [821139900.000]   API调用: 2.00秒
+# [821139900.000]   循环总耗时: 3.00秒
+# [821139900.000]   各阶段占比:
+# [821139900.000]     音频采集: 33.3%
+# [821139900.000]     WAV创建: 0.0%
+# [821139900.000]     API调用: 66.7%
+# [821139900.000] ===============================
+#
+#
+# [821139900.000] === 网络状态检查 ===
+# [821139900.000] AP模式状态: 关闭
+# [821139900.000] STA模式状态: 开启
+# [821139900.000] WiFi连接状态: 已连接
+# [821139900.000] IP地址: 192.168.1.23
+# [821139900.000] 子网掩码: 255.255.255.0
+# [821139900.000] 网关: 192.168.1.1
+# [821139900.000] DNS: 192.168.1.1
+# [821139900.000] 信号强度: -35 dBm
+# [821139900.000] 信号质量: 优秀 📶📶📶
+# [821139900.000] 网络检查总耗时: 0.000秒
+# [821139900.000] === 网络检查结束 ===
+#
+# [821139900.000] 等待下一轮...
+#
+#
+# [821139900.000] ====== 第4轮循环开始 ======
+# [821139900.000] 🎤 开始采集2秒音频...
+# [821139900.000]   进度: 28%
+# [821139900.000]   进度: 78%
+# [821139900.000] ✅ 采集完成: 128000 字节，耗时: 2.00秒
+# [821139900.000] 🎵 开始创建WAV文件...
+# [821139900.000] ✅ WAV文件创建完成，大小: 128044 字节，耗时: 0.00秒
+#
+# [821139900.000] ========== 开始API调用 ==========
+# [821139900.000] 1. Base64编码开始...
+# [821139900.000]   ✅ Base64编码完成，数据长度: 170728 字符
+# [821139900.000]   编码耗时: 0.000秒
+# [821139900.000] 2. 构建请求数据...
+# [821139900.000]   ✅ 请求数据构建完成
+# [821139900.000]   JSON大小: 171116 字节
+# [821139900.000]   JSON构建耗时: 0.000秒
+# [821139900.000]   总构建耗时: 0.000秒
+# [821139900.000]   使用字符串拼接替代json.dumps()
+# [821139900.000] 3. DNS解析开始...
+# [821139900.000]   ✅ DNS解析成功
+# [821139900.000]   域名: dashscope.aliyuncs.com -> IP: 8.152.159.24
+# [821139900.000]   DNS解析耗时: 0.000秒
+# [821139900.000] 4. 发送HTTP请求...
+# [821139900.000]   ✅ HTTP响应接收完成
+# [821139900.000]   状态码: 200
+# [821139900.000]   HTTP请求耗时: 2.000秒
+# [821139900.000]   响应大小: 434 字节
+# [821139900.000] 5. 解析响应数据...
+# [821139900.000]   ✅ 响应解析成功
+# [821139900.000]   解析耗时: 0.000秒
+#
+# [821139900.000] ========== API调用完成 ==========
+# [821139900.000] 识别结果: 行了行了，我知道了啊。
+# [821139900.000] 各阶段耗时统计:
+# [821139900.000]   Base64编码: 0.000秒 (0.0%)
+# [821139900.000]   请求构建: 0.000秒 (0.0%)
+# [821139900.000]   DNS解析: 0.000秒 (0.0%)
+# [821139900.000]   HTTP请求: 2.000秒 (100.0%)
+# [821139900.000]   响应解析: 0.000秒 (0.0%)
+# [821139900.000]   总耗时: 2.000秒
+# [821139900.000] ================================
+#
+#
+# [821139900.000] ====== 第4轮循环统计 ======
+# [821139900.000]   音频采集: 2.00秒
+# [821139900.000]   WAV创建: 0.00秒
+# [821139900.000]   API调用: 2.00秒
+# [821139900.000]   循环总耗时: 4.00秒
+# [821139900.000]   各阶段占比:
+# [821139900.000]     音频采集: 50.0%
+# [821139900.000]     WAV创建: 0.0%
+# [821139900.000]     API调用: 50.0%
+# [821139900.000] ===============================
+#
+# [821139900.000] 等待下一轮...
+#
+#
+# [821139900.000] ====== 第5轮循环开始 ======
+# [821139900.000] 🎤 开始采集2秒音频...
+# [821139900.000]   进度: 52%
+# [821139900.000] ✅ 采集完成: 128000 字节，耗时: 1.00秒
+# [821139900.000] 🎵 开始创建WAV文件...
+# [821139900.000] ✅ WAV文件创建完成，大小: 128044 字节，耗时: 0.00秒
+#
+# [821139900.000] ========== 开始API调用 ==========
+# [821139900.000] 1. Base64编码开始...
+# [821139900.000]   ✅ Base64编码完成，数据长度: 170728 字符
+# [821139900.000]   编码耗时: 1.000秒
+# [821139900.000] 2. 构建请求数据...
+# [821139900.000]   ✅ 请求数据构建完成
+# [821139900.000]   JSON大小: 171116 字节
+# [821139900.000]   JSON构建耗时: 0.000秒
+# [821139900.000]   总构建耗时: 0.000秒
+# [821139900.000]   使用字符串拼接替代json.dumps()
+# [821139900.000] 3. DNS解析开始...
+# [821139900.000]   ✅ DNS解析成功
+# [821139900.000]   域名: dashscope.aliyuncs.com -> IP: 8.152.159.24
+# [821139900.000]   DNS解析耗时: 0.000秒
+# [821139900.000] 4. 发送HTTP请求...
+# [821139900.000]   ✅ HTTP响应接收完成
+# [821139900.000]   状态码: 200
+# [821139900.000]   HTTP请求耗时: 1.000秒
+# [821139900.000]   响应大小: 439 字节
+# [821139900.000] 5. 解析响应数据...
+# [821139900.000]   ✅ 响应解析成功
+# [821139900.000]   解析耗时: 0.000秒
+#
+# [821139900.000] ========== API调用完成 ==========
+# [821139900.000] 识别结果: I feel like.
+# [821139900.000] 各阶段耗时统计:
+# [821139900.000]   Base64编码: 1.000秒 (50.0%)
+# [821139900.000]   请求构建: 0.000秒 (0.0%)
+# [821139900.000]   DNS解析: 0.000秒 (0.0%)
+# [821139900.000]   HTTP请求: 1.000秒 (50.0%)
+# [821139900.000]   响应解析: 0.000秒 (0.0%)
+# [821139900.000]   总耗时: 2.000秒
+# [821139900.000] ================================
+#
+#
+# [821139900.000] ====== 第5轮循环统计 ======
+# [821139900.000]   音频采集: 1.00秒
+# [821139900.000]   WAV创建: 0.00秒
+# [821139900.000]   API调用: 2.00秒
+# [821139900.000]   循环总耗时: 3.00秒
+# [821139900.000]   各阶段占比:
+# [821139900.000]     音频采集: 33.3%
+# [821139900.000]     WAV创建: 0.0%
+# [821139900.000]     API调用: 66.7%
+# [821139900.000] ===============================
+#
+# [821139900.000] 等待下一轮...
+#
+#
+# [821139900.000] ====== 第6轮循环开始 ======
+# [821139900.000] 🎤 开始采集2秒音频...
+# [821139900.000]   进度: 35%
+# [821139900.000]   进度: 85%
+# [821139900.000] ✅ 采集完成: 128000 字节，耗时: 2.00秒
+# [821139900.000] 🎵 开始创建WAV文件...
+# [821139900.000] ✅ WAV文件创建完成，大小: 128044 字节，耗时: 0.00秒
+#
+# [821139900.000] ========== 开始API调用 ==========
+# [821139900.000] 1. Base64编码开始...
+# [821139900.000]   ✅ Base64编码完成，数据长度: 170728 字符
+# [821139900.000]   编码耗时: 0.000秒
+# [821139900.000] 2. 构建请求数据...
+# [821139900.000]   ✅ 请求数据构建完成
+# [821139900.000]   JSON大小: 171116 字节
+# [821139900.000]   JSON构建耗时: 0.000秒
+# [821139900.000]   总构建耗时: 0.000秒
+# [821139900.000]   使用字符串拼接替代json.dumps()
+# [821139900.000] 3. DNS解析开始...
+# [821139900.000]   ✅ DNS解析成功
+# [821139900.000]   域名: dashscope.aliyuncs.com -> IP: 8.152.159.24
+# [821139900.000]   DNS解析耗时: 0.000秒
+# [821139900.000] 4. 发送HTTP请求...
+# [821139900.000]   ✅ HTTP响应接收完成
+# [821139900.000]   状态码: 200
+# [821139900.000]   HTTP请求耗时: 1.000秒
+# [821139900.000]   响应大小: 435 字节
+# [821139900.000] 5. 解析响应数据...
+# [821139900.000]   ✅ 响应解析成功
+# [821139900.000]   解析耗时: 0.000秒
+#
+# [821139900.000] ========== API调用完成 ==========
+# [821139900.000] 识别结果: 行不？大人先走。
+# [821139900.000] 各阶段耗时统计:
+# [821139900.000]   Base64编码: 0.000秒 (0.0%)
+# [821139900.000]   请求构建: 0.000秒 (0.0%)
+# [821139900.000]   DNS解析: 0.000秒 (0.0%)
+# [821139900.000]   HTTP请求: 1.000秒 (100.0%)
+# [821139900.000]   响应解析: 0.000秒 (0.0%)
+# [821139900.000]   总耗时: 1.000秒
+# [821139900.000] ================================
+#
+#
+# [821139900.000] ====== 第6轮循环统计 ======
+# [821139900.000]   音频采集: 2.00秒
+# [821139900.000]   WAV创建: 0.00秒
+# [821139900.000]   API调用: 1.00秒
+# [821139900.000]   循环总耗时: 3.00秒
+# [821139900.000]   各阶段占比:
+# [821139900.000]     音频采集: 66.7%
+# [821139900.000]     WAV创建: 0.0%
+# [821139900.000]     API调用: 33.3%
+# [821139900.000] ===============================
+#
+#
+# [821139900.000] === 网络状态检查 ===
+# [821139900.000] AP模式状态: 关闭
+# [821139900.000] STA模式状态: 开启
+# [821139900.000] WiFi连接状态: 已连接
+# [821139900.000] IP地址: 192.168.1.23
+# [821139900.000] 子网掩码: 255.255.255.0
+# [821139900.000] 网关: 192.168.1.1
+# [821139900.000] DNS: 192.168.1.1
+# [821139900.000] 信号强度: -35 dBm
+# [821139900.000] 信号质量: 优秀 📶📶📶
+# [821139900.000] 网络检查总耗时: 0.000秒
+# [821139900.000] === 网络检查结束 ===
+#
+# [821139900.000] 等待下一轮...
+#
+#
+# [821139900.000] ====== 第7轮循环开始 ======
+# [821139900.000] 🎤 开始采集2秒音频...
+# [821139900.000]   进度: 18%
+# [821139900.000]   进度: 65%
 #
 # ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 #
-# ====== 程序结束 ======
-# 完成循环数: 3
+# [821139900.000] ====== 程序结束 ======
+# [821139900.000] 运行总时长: 33.00秒
+# [821139900.000] 完成循环数: 7
 #
 # MPY: soft reboot
 # MicroPython v1.26.0 on 2025-08-09; Generic ESP32S3 module with Octal-SPIRAM with ESP32S3
