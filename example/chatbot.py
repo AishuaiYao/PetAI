@@ -8,7 +8,7 @@ from machine import I2S, Pin
 
 WIFI_SSID = "CMCC-huahua"
 WIFI_PASSWORD = "*HUAHUAshi1zhimao"
-API_KEY = 'sk-ad3c50fe6e16438a8fac5e8b2d7b3829' #不要使用2935
+API_KEY = 'sk-943f95da67d04893b70c02be400e2935' #不要使用2935
 COLLECT_SECONDS = 5
 SAMPLE_RATE = 16000
 RECV_BUFFER_SIZE = 8192
@@ -220,6 +220,15 @@ def asr_api_call(wav_data):
 
     body = response.split(b'\r\n\r\n', 1)[1]
     result = json.loads(body)
+
+    if 'output' not in result:
+        print(f"[ASR] 错误响应: {result}")
+        return ""
+
+    if 'choices' not in result['output'] or len(result['output']['choices']) == 0:
+        print(f"[ASR] 错误响应: {result}")
+        return ""
+
     text = result['output']['choices'][0]['message']['content'][0]['text']
     print(f"[ASR] 识别: {text}")
     return text
@@ -254,6 +263,11 @@ def qwen_api_call(text):
 
     body = response.split(b'\r\n\r\n', 1)[1]
     result = json.loads(body)
+
+    if 'choices' not in result or len(result['choices']) == 0:
+        print(f"[Qwen] 错误响应: {result}")
+        return ""
+
     content = result['choices'][0]['message']['content']
     print(f"[Qwen] 回复: {content}")
     return content
