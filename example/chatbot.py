@@ -37,7 +37,6 @@ TTS_CHANNELS = 1
 audio_buffer = []  # 音频数据缓冲区
 buffer_lock = _thread.allocate_lock()  # 保护buffer的锁
 tts_receiving_complete = False  # 标记TTS接收线程是否已完成所有工作
-tts_playing = False  # 标记TTS是否正在播放
 
 
 def connect_wifi():
@@ -215,7 +214,7 @@ def qwen_api_call(text):
 
 # ===================== 音频播放线程 =====================
 def audio_player():
-    """音频播放线程：从audio_buffer中读取并播放音频数据"""
+    """音频播放线程：长期存在，持续从audio_buffer中读取并播放音频数据"""
     print("[TTS] 音频播放线程启动")
     time.sleep(0.5)  # 等待一小段时间确保I2S初始化
 
@@ -235,34 +234,18 @@ def audio_player():
 
     chunk_count = 0
 
-    global tts_playing
-    tts_playing = True
-
-    while tts_playing:
+    while True:
         with buffer_lock:
             if audio_buffer:
                 # 从缓冲区获取音频数据
                 audio_chunk = audio_buffer.pop(0)
-                # print(f"[TTS] 播放音频块{chunk_count + 1} 大小: {len(audio_chunk)}, 缓冲区剩余: {len(audio_buffer)}块")
-            elif tts_receiving_complete:
-                # 接收已完成且缓冲区为空 -> 所有数据都播放完了
-                print("[TTS] 播放线程检测到接收完成且缓冲区为空，准备退出")
-                break
             else:
-                # 缓冲区为空但接收未完成
-                audio_chunk = None
+                # 没有数据，继续循环检测
+                continue
 
-        # 在锁外播放音频，避免阻塞接收线程
-        if audio_chunk is not None:
-            audio_out.write(audio_chunk)
-            chunk_count += 1
-
-    print(f"[TTS] 播放完成，共播放 {chunk_count} 个音频块")
-
-    # 清理资源
-    audio_out.deinit()
-    Pin(AMP_ENABLE_PIN, Pin.OUT).value(0)  # 关闭功放
-    tts_playing = False
+        # 在锁外播放音频，避免阻塞其他线程
+        audio_out.write(audio_chunk)
+        chunk_count += 1
 
 
 # ===================== TTS数据接收与解析 =====================
@@ -369,8 +352,8 @@ def stream_tts_response(sock):
 
 
 def tts_api_call(text):
-    """TTS API调用（多线程版本）"""
-    global tts_receiving_complete, audio_buffer, tts_playing
+    """TTS API调用（播放线程已存在，只负责接收数据）"""
+    global tts_receiving_complete, audio_buffer
 
     print(f"[TTS] 开始播放: {text}")
 
@@ -378,11 +361,6 @@ def tts_api_call(text):
     with buffer_lock:
         audio_buffer = []
     tts_receiving_complete = False
-    tts_playing = True
-
-    # 启动音频播放线程
-    _thread.start_new_thread(audio_player, ())
-    time.sleep(0.5)  # 等待播放线程初始化
 
     # 构建TTS请求
     payload_dict = {
@@ -444,16 +422,13 @@ def tts_api_call(text):
     # 标记接收完成
     tts_receiving_complete = True
 
-    # 等待播放完成
+    # 等待缓冲区播放完毕
     while True:
         with buffer_lock:
             buffer_empty = len(audio_buffer) == 0
-            all_done = tts_receiving_complete and buffer_empty
-
-        if all_done and not tts_playing:
-            break
-
-        time.sleep(0.5)
+            if tts_receiving_complete and buffer_empty:
+                break
+        time.sleep(0.05)
 
     sock.close()
     print("[TTS] 播放完成")
@@ -468,6 +443,10 @@ def main():
 
     # 初始化麦克风（只初始化一次，使用I2S(0)）
     mic = init_microphone()
+
+    # 启动音频播放线程（长期存在）
+    _thread.start_new_thread(audio_player, ())
+    time.sleep(0.5)  # 等待播放线程初始化
 
     while True:
         print("\n--- 新一轮对话 ---")
