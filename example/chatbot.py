@@ -12,7 +12,8 @@ API_KEY = 'sk-943f95da67d04893b70c02be400e2935'
 COLLECT_SECONDS = 5
 SAMPLE_RATE = 16000
 RECV_BUFFER_SIZE = 8192
-VAD_THRESHOLD = 500
+vad_threshold = 500
+VAD_INITIALIZATION_SECONDS = 2
 SILENCE_FRAMES = 20
 VOICE_FRAMES = 20
 
@@ -75,8 +76,36 @@ def init_microphone():
     return mic
 
 
-def detect_voice_in_chunk(chunk):
-    """检测chunk是否有语音（32位转16位）"""
+def calculate_vad_threshold(mic, seconds):
+    """采集环境噪音并计算VAD阈值"""
+    print(f"[VAD] 开始采集环境噪音，时长: {seconds}秒...")
+    chunk_size = 3200
+    chunks_per_second = SAMPLE_RATE * 2 / (chunk_size / 4)
+    total_chunks = int(chunks_per_second * seconds)
+
+    rms_values = []
+
+    for i in range(total_chunks):
+        chunk = bytearray(chunk_size)
+        mic.readinto(chunk)
+
+        rms = calculate_rms(chunk)
+        rms_values.append(rms)
+
+    avg_rms = sum(rms_values) / len(rms_values)
+    max_rms = max(rms_values)
+    min_rms = min(rms_values)
+
+    print(f"[VAD] 环境噪音统计: 平均={avg_rms:.2f}, 最大={max_rms:.2f}, 最小={min_rms:.2f}")
+
+    threshold = avg_rms * 2
+    print(f"[VAD] 设定阈值: {threshold:.2f} (平均值的2倍)")
+
+    return threshold
+
+
+def calculate_rms(chunk):
+    """计算音频块的RMS值（32位转16位）"""
     import struct
     sample_count = len(chunk) // 4
     sum_squares = 0
@@ -87,7 +116,13 @@ def detect_voice_in_chunk(chunk):
         sum_squares += sample_16 * sample_16
 
     rms = (sum_squares / sample_count) ** 0.5
-    return rms > VAD_THRESHOLD
+    return rms
+
+
+def detect_voice_in_chunk(chunk):
+    """检测chunk是否有语音"""
+    rms = calculate_rms(chunk)
+    return rms > vad_threshold
 
 
 def collect_audio(mic):
@@ -437,12 +472,21 @@ def tts_api_call(text):
 
 
 def main():
+    global vad_threshold
+
     print("===== 语音助手启动 =====")
     if not connect_wifi():
         return
 
     # 初始化麦克风（只初始化一次，使用I2S(0)）
     mic = init_microphone()
+
+    # 动态计算VAD阈值
+    print("\n--- 计算环境噪音阈值 ---")
+    print("[VAD] 请保持安静，正在采集环境噪音...")
+    vad_threshold = calculate_vad_threshold(mic, VAD_INITIALIZATION_SECONDS)
+    print(f"[VAD] 阈值已设定为: {vad_threshold:.2f}")
+    print("[VAD] 现在可以开始说话了\n")
 
     # 启动音频播放线程（长期存在）
     _thread.start_new_thread(audio_player, ())
