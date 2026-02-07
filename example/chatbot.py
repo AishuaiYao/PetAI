@@ -60,7 +60,7 @@ def connect_wifi():
 
 def init_microphone():
     """初始化麦克风并丢弃初始化噪音"""
-    print("[Mic] 初始化麦克风...")
+    print("[Mic] 初始化麦克风...") #麦克风的LR要接地
     mic = I2S(0, sck=Pin(12), ws=Pin(13), sd=Pin(14),
               mode=I2S.RX, bits=32, format=I2S.MONO,
               rate=SAMPLE_RATE, ibuf=48000)
