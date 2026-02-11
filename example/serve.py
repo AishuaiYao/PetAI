@@ -97,7 +97,7 @@ def init_camera():
             pass
 
         # 使用你已验证的参数
-        camera.init(0, format=camera.JPEG, framesize=camera.FRAME_SVGA,
+        camera.init(0, format=camera.GRAYSCALE, framesize=camera.FRAME_QVGA,
                     xclk_freq=camera.XCLK_20MHz,
                     d0=CAM_PIN_D0, d1=CAM_PIN_D1, d2=CAM_PIN_D2, d3=CAM_PIN_D3,
                     d4=CAM_PIN_D4, d5=CAM_PIN_D5, d6=CAM_PIN_D6, d7=CAM_PIN_D7,
@@ -107,7 +107,7 @@ def init_camera():
 
         # 可选：调整图像质量
         try:
-            camera.quality(10)  # 设置图像质量（0-63，越小质量越高）
+            camera.quality(0)  # 设置图像质量（0-63，越小质量越高）
         except:
             pass
 
@@ -129,7 +129,7 @@ class ImageServer:
         self.server_socket = None
         self.client_socket = None
         self.running = False
-        self.capture_interval = 1  # 1秒采集一次
+        self.capture_interval = 0.1  # 1秒采集一次
         self.frame_count = 0
 
     def start(self):
@@ -141,7 +141,6 @@ class ImageServer:
         print(f"图像服务器已启动，等待连接...")
         print(f"IP: {self.ip}:{self.port}")
 
-        # 设置超时，避免accept阻塞
 
         # 等待客户端连接
         while not self.client_socket:
@@ -157,16 +156,15 @@ class ImageServer:
         self.send_images()
 
     def send_images(self):
-        """每秒发送一次图像"""
+
         last_capture_time = 0
 
         while self.running:
             try:
                 current_time = time.time()
 
-                # 每秒捕获一次图像
                 if current_time - last_capture_time >= self.capture_interval:
-                    # 捕获图像
+
                     buf = camera.capture()
 
                     if buf:
@@ -251,4 +249,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
