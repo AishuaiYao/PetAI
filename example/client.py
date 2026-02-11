@@ -213,6 +213,7 @@ class GrayscaleImageClient:
         print(f"客户端已停止")
 
 
+
 def main():
     # 配置参数
     SERVER_IP = "192.168.4.1"  # ESP32 AP模式的默认IP
