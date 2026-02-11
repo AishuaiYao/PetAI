@@ -217,7 +217,7 @@ def main():
     # 配置参数
     SERVER_IP = "192.168.4.1"  # ESP32 AP模式的默认IP
     SERVER_PORT = 5000
-    SAVE_PATH = "imgs"  # 图像保存路径
+    SAVE_PATH = "GRAYSCALE_FRAME_QVGA"  # 图像保存路径
 
     print("灰度图像接收客户端")
     print(f"服务器: {SERVER_IP}:{SERVER_PORT}")
