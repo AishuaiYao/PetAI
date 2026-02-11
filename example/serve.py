@@ -14,7 +14,7 @@ except ImportError:
 # ===========================
 # WiFi AP 配置 (ESP32作为热点)
 # ===========================
-AP_SSID = "ESP32-CAM-AP"
+AP_SSID = "CAM-AP"
 AP_PASSWORD = "*HA39&q2Iah"
 
 # ===========================
