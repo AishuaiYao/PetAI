@@ -15,7 +15,7 @@ except ImportError:
 # WiFi AP 配置 (ESP32作为热点)
 # ===========================
 AP_SSID = "ESP32-CAM-AP"
-AP_PASSWORD = "12345678"
+AP_PASSWORD = "*HA39&q2Iah"
 
 # ===========================
 # 引脚定义 (使用你已验证的配置)
@@ -129,7 +129,6 @@ class ImageServer:
         self.server_socket = None
         self.client_socket = None
         self.running = False
-        self.capture_interval = 0.1  # 1秒采集一次
         self.frame_count = 0
 
     def start(self):
@@ -140,7 +139,6 @@ class ImageServer:
         self.server_socket.listen(1)
         print(f"图像服务器已启动，等待连接...")
         print(f"IP: {self.ip}:{self.port}")
-
 
         # 等待客户端连接
         while not self.client_socket:
@@ -157,35 +155,26 @@ class ImageServer:
 
     def send_images(self):
 
-        last_capture_time = 0
 
         while self.running:
             try:
-                current_time = time.time()
+                buf = camera.capture()
 
-                if current_time - last_capture_time >= self.capture_interval:
+                if buf:
+                    # 准备数据包：帧大小(4字节) + 图像数据
+                    frame_size = len(buf)
+                    header = frame_size.to_bytes(4, 'big')
 
-                    buf = camera.capture()
+                    try:
+                        # 发送数据
+                        self.client_socket.sendall(header + buf)
+                        self.frame_count += 1
 
-                    if buf:
-                        # 准备数据包：帧大小(4字节) + 图像数据
-                        frame_size = len(buf)
-                        header = frame_size.to_bytes(4, 'big')
+                        print(f"{self.frame_count} 已发送 {frame_size} 字节")
 
-                        try:
-                            # 发送数据
-                            self.client_socket.sendall(header + buf)
-                            self.frame_count += 1
-
-                            print(f"{self.frame_count} 已发送 {frame_size} 字节")
-
-                        except Exception as e:
-                            print(f"发送失败: {e}")
-                            break
-
-                        last_capture_time = current_time
-                    else:
-                        print("捕获到空图像")
+                    except Exception as e:
+                        print(f"发送失败: {e}")
+                        break
 
                 # 检查客户端是否断开
                 try:
@@ -199,12 +188,9 @@ class ImageServer:
                 except:
                     pass
 
-                # 短暂延迟
-                time.sleep(0.01)
 
             except Exception as e:
                 print(f"错误: {e}")
-                time.sleep(1)
 
         self.cleanup()
 
@@ -249,5 +235,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 

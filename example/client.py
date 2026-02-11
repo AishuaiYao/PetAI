@@ -46,7 +46,6 @@ class GrayscaleImageClient:
     def receive_images(self, save_path="received_images", save_every_n=1):
         """
         接收灰度图像并保存为PNG
-
         Args:
             save_path: 保存路径
             save_every_n: 每N帧保存一次，1=保存每一帧
@@ -115,9 +114,7 @@ class GrayscaleImageClient:
                     if success:
                         self.saved_count += 1
 
-                        # 每保存10张显示一次
-                        if self.saved_count % 10 == 0:
-                            print(f"  -> 已保存 {self.saved_count} 张PNG图像")
+                        print(f"  -> 已保存 {self.saved_count} 张PNG图像")
 
         except KeyboardInterrupt:
             print("\n用户中断接收")
@@ -220,7 +217,7 @@ def main():
     # 配置参数
     SERVER_IP = "192.168.4.1"  # ESP32 AP模式的默认IP
     SERVER_PORT = 5000
-    SAVE_PATH = "received_images"  # 图像保存路径
+    SAVE_PATH = "2"  # 图像保存路径
 
     print("灰度图像接收客户端")
     print(f"服务器: {SERVER_IP}:{SERVER_PORT}")
