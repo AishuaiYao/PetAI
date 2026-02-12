@@ -50,7 +50,6 @@ class GrayscaleImageClient:
         if not self.running:
             print("未连接到服务器")
             return
-
         # 创建保存目录
         os.makedirs(save_path, exist_ok=True)
         print(f"图像将保存到: {save_path}")
