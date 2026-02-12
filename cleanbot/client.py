@@ -5,6 +5,8 @@ import cv2
 import time
 import os
 
+save_path = "RGB_FRAME_QVGA"
+h, w = 320, 240
 
 class GrayscaleImageClient:
     def __init__(self, server_ip, server_port=5000):
@@ -21,10 +23,6 @@ class GrayscaleImageClient:
         self.frames_in_last_second = 0
         self.total_bytes = 0
 
-        # 灰度图的尺寸 (QVGA: 320x240)
-        self.image_width = 320
-        self.image_height = 240
-        self.image_size = self.image_width * self.image_height  # 76800字节
 
     def connect(self):
         """连接到ESP32服务器"""
@@ -43,11 +41,10 @@ class GrayscaleImageClient:
             print(f"连接失败: {e}")
             return False
 
-    def receive_images(self, save_path="received_images", save_every_n=1):
+    def receive_images(self, save_every_n=1):
         """
         接收灰度图像并保存为PNG
         Args:
-            save_path: 保存路径
             save_every_n: 每N帧保存一次，1=保存每一帧
         """
         if not self.running:
@@ -59,7 +56,6 @@ class GrayscaleImageClient:
         print(f"图像将保存到: {save_path}")
 
         print(f"开始接收灰度图像...")
-        print(f"图像尺寸: {self.image_width}x{self.image_height}")
         print("按 Ctrl+C 停止接收\n")
 
         # 初始化统计
@@ -110,7 +106,7 @@ class GrayscaleImageClient:
 
                 # 保存PNG图像
                 if self.frame_count % save_every_n == 0:
-                    success = self._save_as_png(save_path, self.frame_count, image_data)
+                    success = self._save_as_png( self.frame_count, image_data)
                     if success:
                         self.saved_count += 1
 
@@ -151,30 +147,27 @@ class GrayscaleImageClient:
 
         return data
 
-    def _save_as_png(self, save_path, frame_num, image_data):
+    def _save_as_png(self, frame_num, image_data):
         """保存为PNG图像"""
         try:
-            # 转换为numpy数组
-            if len(image_data) == self.image_size:
-                gray_array = np.frombuffer(image_data, dtype=np.uint8)
-                gray_array = gray_array.reshape((self.image_height, self.image_width))
 
-                # 生成文件名
-                timestamp = time.strftime("%Y%m%d_%H%M%S")
-                filename = f"{save_path}/frame_{frame_num:06d}_{timestamp}.png"
+            gray_array = np.frombuffer(image_data, dtype=np.uint8)
+            gray_array = gray_array.reshape((w, h))
 
-                # 保存为PNG
-                cv2.imwrite(filename, gray_array)
+            # 生成文件名
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"{save_path}/frame_{frame_num:06d}_{timestamp}.png"
 
-                # 显示前几张的保存信息
-                if frame_num <= 5:
-                    file_size = os.path.getsize(filename)
-                    print(f"  -> 保存第 {frame_num} 帧: {filename} ({file_size / 1024:.1f} KB)")
+            # 保存为PNG
+            cv2.imwrite(filename, gray_array)
 
-                return True
-            else:
-                print(f"第 {frame_num} 帧数据大小错误: {len(image_data)} != {self.image_size}")
-                return False
+            # 显示前几张的保存信息
+            if frame_num <= 5:
+                file_size = os.path.getsize(filename)
+                print(f"  -> 保存第 {frame_num} 帧: {filename} ({file_size / 1024:.1f} KB)")
+
+            return True
+
 
         except Exception as e:
             print(f"保存第 {frame_num} 帧失败: {e}")
@@ -218,7 +211,6 @@ def main():
     # 配置参数
     SERVER_IP = "192.168.4.1"  # ESP32 AP模式的默认IP
     SERVER_PORT = 5000
-    SAVE_PATH = "GRAYSCALE_FRAME_QVGA"  # 图像保存路径
 
     print("灰度图像接收客户端")
     print(f"服务器: {SERVER_IP}:{SERVER_PORT}")
@@ -231,10 +223,10 @@ def main():
     if client.connect():
         try:
             # 接收图像，参数说明：
-            # save_path: 保存路径
+
             # save_every_n: 保存间隔，1=保存每一帧
             client.receive_images(
-                save_path=SAVE_PATH,
+
                 save_every_n=1  # 保存每一帧
             )
         except KeyboardInterrupt:
