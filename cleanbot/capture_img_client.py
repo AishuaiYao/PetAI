@@ -5,8 +5,20 @@ import cv2
 import time
 import os
 
-save_path = "FRAME_96X96"
-h, w = 96, 96  # 平均帧率: 12.1 FPS
+"""
+RAME_96X96	96x96 平均帧率: 12.1 FPS
+FRAME_QQVGA	160x120 平均帧率: 12.2 FPS
+FRAME_QCIF	176x144
+FRAME_HQVGA	240x176
+FRAME_QVGA	320x240
+FRAME_CIF	352x288
+FRAME_VGA	640x480
+FRAME_SVGA	800x600
+FRAME_XGA	1024x768
+FRAME_SXGA	1280x1024
+"""
+save_path = "FRAME_QQVGA"
+h, w = 160, 120  #
 
 class GrayscaleImageClient:
     def __init__(self, server_ip, server_port=5000):
@@ -76,7 +88,7 @@ class GrayscaleImageClient:
                 image_data = self._receive_bytes(frame_size)
                 if not image_data:
                     print("图像数据接收不完整")
-                    break
+                    continue
 
                 if len(image_data) != frame_size:
                     print(f"数据长度不匹配: 期望 {frame_size}, 实际 {len(image_data)}")

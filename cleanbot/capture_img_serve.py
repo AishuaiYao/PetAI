@@ -167,7 +167,7 @@ class ImageServer:
 
                     except Exception as e:
                         print(f"发送失败: {e}")
-                        break
+                        continue
 
                 # 检查客户端是否断开
                 try:
