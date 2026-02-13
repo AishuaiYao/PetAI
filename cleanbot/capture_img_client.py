@@ -20,6 +20,7 @@ FRAME_SXGA	1280x1024
 save_path = "FRAME_QQVGA"
 h, w = 160, 120  #
 
+
 class GrayscaleImageClient:
     def __init__(self, server_ip, server_port=5000):
         self.server_ip = server_ip
@@ -34,7 +35,6 @@ class GrayscaleImageClient:
         self.last_stat_time = None
         self.frames_in_last_second = 0
         self.total_bytes = 0
-
 
     def connect(self):
         """连接到ESP32服务器"""
@@ -52,6 +52,19 @@ class GrayscaleImageClient:
         except socket.error as e:
             print(f"连接失败: {e}")
             return False
+
+    def _reconnect(self):
+        """断开后重连"""
+        if self.client_socket:
+            try:
+                self.client_socket.close()
+            except:
+                pass
+            self.client_socket = None
+
+        print("尝试重新连接...")
+        time.sleep(1)
+        return self.connect()
 
     def receive_images(self):
         """
@@ -73,13 +86,16 @@ class GrayscaleImageClient:
         self.frames_in_last_second = 0
         self.saved_count = 0
 
-        try:
-            while self.running:
+        while self.running:
+            try:
                 # 1. 接收帧大小 (4字节)
                 header_data = self._receive_bytes(4)
                 if not header_data:
-                    print("连接断开")
-                    break
+                    print("连接断开，尝试重连...")
+                    if self._reconnect():
+                        continue
+                    else:
+                        break
 
                 # 解析帧大小
                 frame_size = struct.unpack('>I', header_data)[0]
@@ -87,12 +103,18 @@ class GrayscaleImageClient:
                 # 2. 接收图像数据
                 image_data = self._receive_bytes(frame_size)
                 if not image_data:
-                    print("图像数据接收不完整")
-                    continue
+                    print("图像数据接收不完整，重新同步...")
+                    if self._reconnect():
+                        continue
+                    else:
+                        break
 
                 if len(image_data) != frame_size:
-                    print(f"数据长度不匹配: 期望 {frame_size}, 实际 {len(image_data)}")
-                    continue
+                    print(f"数据长度不匹配: 期望 {frame_size}, 实际 {len(image_data)}，重新同步...")
+                    if self._reconnect():
+                        continue
+                    else:
+                        break
 
                 self.frame_count += 1
                 self.total_bytes += frame_size
@@ -103,27 +125,26 @@ class GrayscaleImageClient:
                 if current_time - self.last_stat_time >= 1.0:
                     fps = self.frames_in_last_second
                     data_rate = self.total_bytes / (current_time - self.start_time) / 1024
-
                     print(f"[{time.strftime('%H:%M:%S')}] "
                           f"接收: {self.frame_count}帧 | "
                           f"FPS: {fps:3d} | "
                           f"已保存: {self.saved_count}张 | "
                           f"速率: {data_rate:6.1f} KB/s")
-
                     self.last_stat_time = current_time
                     self.frames_in_last_second = 0
 
                 # 保存PNG图像
-                success = self._save_as_png( self.frame_count, image_data)
+                success = self._save_as_png(self.frame_count, image_data)
                 if success:
                     self.saved_count += 1
 
-        except KeyboardInterrupt:
-            print("\n用户中断接收")
-        except Exception as e:
-            print(f"接收错误: {e}")
-            import traceback
-            traceback.print_exc()
+            except KeyboardInterrupt:
+                print("\n用户中断接收")
+                break
+            except Exception as e:
+                print(f"接收错误: {e}，尝试重连...")
+                if not self._reconnect():
+                    break
 
         # 最终统计
         self._show_final_statistics()
@@ -156,7 +177,6 @@ class GrayscaleImageClient:
     def _save_as_png(self, frame_num, image_data):
         """保存为PNG图像"""
         try:
-
             gray_array = np.frombuffer(image_data, dtype=np.uint8)
             gray_array = gray_array.reshape((w, h))
 
@@ -173,7 +193,6 @@ class GrayscaleImageClient:
                 print(f"  -> 保存第 {frame_num} 帧: {filename} ({file_size / 1024:.1f} KB)")
 
             return True
-
 
         except Exception as e:
             print(f"保存第 {frame_num} 帧失败: {e}")
@@ -210,7 +229,6 @@ class GrayscaleImageClient:
                 pass
 
         print(f"客户端已停止")
-
 
 
 def main():
