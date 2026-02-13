@@ -5,8 +5,8 @@ import cv2
 import time
 import os
 
-save_path = "RGB_FRAME_QVGA"
-h, w = 320, 240
+save_path = "FRAME_96X96"
+h, w = 96, 96  # 平均帧率: 12.1 FPS
 
 class GrayscaleImageClient:
     def __init__(self, server_ip, server_port=5000):

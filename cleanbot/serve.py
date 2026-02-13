@@ -92,7 +92,7 @@ def init_camera():
             pass
 
         # 使用你已验证的参数
-        camera.init(0, format=camera.GRAYSCALE, framesize=camera.FRAME_QVGA,
+        camera.init(0, format=camera.GRAYSCALE, framesize=camera.FRAME_96X96,
                     xclk_freq=camera.XCLK_20MHz,
                     d0=CAM_PIN_D0, d1=CAM_PIN_D1, d2=CAM_PIN_D2, d3=CAM_PIN_D3,
                     d4=CAM_PIN_D4, d5=CAM_PIN_D5, d6=CAM_PIN_D6, d7=CAM_PIN_D7,
