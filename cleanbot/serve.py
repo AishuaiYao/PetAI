@@ -2,14 +2,9 @@ import network
 import time
 import socket
 import select
+import camera
 from machine import Pin
 
-# 确保 camera 模块存在
-try:
-    import camera
-except ImportError:
-    print("FATAL ERROR: 'camera' module is missing. Please flash the custom firmware.")
-    raise
 
 # ===========================
 # WiFi AP 配置 (ESP32作为热点)
@@ -154,8 +149,6 @@ class ImageServer:
         self.send_images()
 
     def send_images(self):
-
-
         while self.running:
             try:
                 buf = camera.capture()

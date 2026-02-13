@@ -41,11 +41,9 @@ class GrayscaleImageClient:
             print(f"连接失败: {e}")
             return False
 
-    def receive_images(self, save_every_n=1):
+    def receive_images(self):
         """
         接收灰度图像并保存为PNG
-        Args:
-            save_every_n: 每N帧保存一次，1=保存每一帧
         """
         if not self.running:
             print("未连接到服务器")
@@ -104,12 +102,9 @@ class GrayscaleImageClient:
                     self.frames_in_last_second = 0
 
                 # 保存PNG图像
-                if self.frame_count % save_every_n == 0:
-                    success = self._save_as_png( self.frame_count, image_data)
-                    if success:
-                        self.saved_count += 1
-
-                        print(f"  -> 已保存 {self.saved_count} 张PNG图像")
+                success = self._save_as_png( self.frame_count, image_data)
+                if success:
+                    self.saved_count += 1
 
         except KeyboardInterrupt:
             print("\n用户中断接收")
@@ -217,17 +212,10 @@ def main():
 
     # 创建客户端
     client = GrayscaleImageClient(SERVER_IP, SERVER_PORT)
-
     # 连接到服务器
     if client.connect():
         try:
-            # 接收图像，参数说明：
-
-            # save_every_n: 保存间隔，1=保存每一帧
-            client.receive_images(
-
-                save_every_n=1  # 保存每一帧
-            )
+            client.receive_images()
         except KeyboardInterrupt:
             print("\n程序被用户中断")
         except Exception as e:
